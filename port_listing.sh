@@ -17,7 +17,7 @@ risk_checking(){
     for p in "${low[@]}"; do [[ "$p" == "$port" ]] && echo -e "${BOLD_GREEN}LOW${RESET}" && return; done
     for p in "${medium[@]}"; do [[ "$p" == "$port" ]] && echo -e "${BOLD_YELLOW}MEDIUM${RESET}" && return; done
     for p in "${high[@]}"; do [[ "$p" == "$port" ]] && echo -e "${BOLD_RED}HIGH${RESET}" && return; done
-    echo -e "${BOLD_RED}UNKNOWN${RESET}"
+    echo -e "${BOLD_YELLOW}UNKNOWN${RESET}"
 }
 
 echo -e "${BOLD_CYAN}\n  🔍 PORT WATCHER - Security Based Listing\n${RESET}"
