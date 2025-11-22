@@ -58,6 +58,7 @@ Color legend:
 ```bash
 # 1️⃣ Clone this repository
 git clone https://github.com/anonymous777999/Bash-Tools.git
+cd Bash-Tools
 
 # 2️⃣ Make the script executable
 chmod +x port-watcher.sh
