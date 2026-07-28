@@ -1,205 +1,226 @@
-# RedVortex ⚡ Ethical Hacker & Web Penetration Tester
-![RedVortex Badge](https://img.shields.io/badge/RedVortex%20⚡%20Ethical%20Hacker%20%26%20Web%20Penetration%20Tester-8A2BE2?style=for-the-badge&logo=security&logoColor=white)
+# 🔍 Port Watcher v2 — Advanced Security Port Risk Analyzer
 
-## ✨ Overview
+![Version](https://img.shields.io/badge/version-2.0.0-22D3EE?style=flat-square&labelColor=0A101F)
+![Shell](https://img.shields.io/badge/shell-bash-10B981?style=flat-square&logo=gnubash&logoColor=white&labelColor=0A101F)
+![License](https://img.shields.io/badge/license-MIT-A78BFA?style=flat-square&labelColor=0A101F)
+![PRs Welcome](https://img.shields.io/badge/PRs-welcome-22D3EE?style=flat-square&labelColor=0A101F)
 
-`PORT WATCHER` is a lightweight Bash script that:
+**Port Watcher v2** is a professional security tool that monitors open ports on Linux systems, maps them to running processes/users/PIDs, and performs **dynamic risk scoring** based on multiple contextual factors — not just port number.
 
-- Lists all **LISTEN** ports on your system using `lsof`
-- Shows the **Port**, **PID**, **User**, and **Process name**
-- Assigns a **Risk Level** (🟢 LOW, 🟡 MEDIUM, 🔴 HIGH, ❓ UNKNOWN)  
-  based on predefined common service ports
-- Uses **colored output** to make it easier to quickly spot risky services
-
-This is especially useful for:
-
-- Quickly auditing exposed ports
-- Checking what services are running and by which users
-- Basic security hygiene and monitoring
-
-
-
-## 📸 Example Output
-
-```text
-🔍 PORT WATCHER - Security Based Listing
-
-|  PORT  |  PID  | USER | PROCESS | RISK LEVEL |
-|  22    |  1234 | root | sshd    |  HIGH      |
-|  80    |  2345 | www  | nginx   |  MEDIUM    |
-|  53    |  3456 | root | named   |  LOW       |
-|  9999  |  4567 | user | myapp   |  UNKNOWN   |
-```
-
-Color legend:
-- 🟢 **LOW** → Common low-risk infra ports (DNS, DHCP, NTP, etc.)
-- 🟡 **MEDIUM** → Web, mail, Windows services, RDP, etc.
-- 🔴 **HIGH** → SSH, DBs, VNC, SIP, SNMP, etc.
-- ❓ **UNKNOWN** → Port not in the predefined lists
+> Built by [RedVortex](https://github.com/anonymous777999) — Ethical Hacker & Security Researcher
 
 ---
 
-## 🧩 How It Works
+## 🚀 Features
 
-1. **Defines color codes** for pretty terminal output.
-2. **`risk_checking()` function**:
-   - Takes a port number
-   - Checks if it’s in `low`, `medium`, or `high` arrays
-   - Prints the corresponding colored risk level
-3. Uses:
-   - `lsof -i -P -n | grep LISTEN` to find all listening sockets
-   - `awk` and `cut` to parse process, PID, user, IP, and port
-4. Prints a neat, table‑style summary for each port.
+### Core Capabilities
+- **Dynamic Risk Scoring** — Score = BASE(PORT) × USER_WEIGHT × BIND_WEIGHT × VERSION_WEIGHT
+- **Full CLI** — 15+ flags for filtering, formatting, and automation
+- **Dual-Stack** — Full IPv4 and IPv6 support (no more silently dropped IPv6 services)
+- **Expanded Port DB** — 200+ ports across 9 categories (Web, Database, Cloud, Container, IoT, etc.)
+
+### Output Formats
+| Format | Use Case |
+|--------|----------|
+| **`--output table`** | Interactive terminal (default) |
+| **`--output json`** | Machine parsing, API integration, SIEM |
+| **`--output csv`** | Spreadsheets, reporting |
+| **`--output html`** | Styled HTML report with dark hacker theme |
+
+### Advanced Features
+| Feature | Description |
+|---------|-------------|
+| **`--watch N`** | Real-time monitoring with change detection |
+| **`--baseline`** | Save/compare against baseline for differential scans |
+| **`--syslog`** | Forward findings to syslog for centralized monitoring |
+| **`--config`** | External config file for customizable risk rules |
+| **Risk filters** | `--risk`, `--port`, `--process`, `--user` |
 
 ---
 
-## 🚀 Installation
+## ⚡ Quick Start
 
 ```bash
-# 1️⃣ Clone this repository
+# Clone and install
 git clone https://github.com/anonymous777999/Bash-Tools.git
 cd Bash-Tools
+sudo make install    # Installs to /usr/local/bin
 
-# 2️⃣ Make the script executable
-chmod +x port-watcher.sh
+# Or run directly
+sudo ./src/port-watcher.sh
 ```
 
-## ▶️ Usage
-
-Run the script with:
+### Basic Usage
 
 ```bash
-./port-watcher.sh
+# Default table output
+sudo port-watcher
+
+# JSON output (for automation/parsing)
+sudo port-watcher --output json
+
+# Filter by risk level
+sudo port-watcher --risk CRITICAL
+
+# Watch mode — refresh every 5 seconds with change detection
+sudo port-watcher --watch 5
+
+# HTML report
+sudo port-watcher --output html --output-file report.html
+
+# Custom config file
+sudo port-watcher --config ./custom-ports.conf
+
+# Differential scan against baseline
+sudo port-watcher --baseline yesterday.json
+sudo port-watcher --baseline yesterday.json   # Shows changes since yesterday
+
+# Log findings to syslog
+sudo port-watcher --syslog
 ```
-
-or directly with `bash`:
-
-```bash
-bash port-watcher.sh
-```
-
-> 🔐 **Note:** The script uses `sudo lsof`, so you might be prompted for your password.
 
 ---
 
-## 📦 Requirements
+## 📊 Dynamic Risk Scoring
 
-- 🐧 Linux / macOS / any Unix-like system with:
-  - `bash`
-  - `lsof`
-  - `awk`
-  - `grep`
-- A terminal that supports **ANSI color codes** (most modern terminals do)
+Unlike simple port-checkers that classify risk by port number alone, Port Watcher v2 calculates a **contextual risk score**:
 
----
-
-## 🛠 Configuration (Optional)
-
-You can edit the script to adjust risk levels:
-
-```bash
-low=(53 67 68 123 443 514 179 546 547 69)
-medium=(80 25 110 445 3389 389 636 135 2000 2001 587 995)
-high=(21 22 23 5900 5901 3306 6379 27017 5060 4786 161 162 445)
+```
+RISK_SCORE = BASE_PORT_RISK × USER_WEIGHT × BIND_WEIGHT × VERSION_WEIGHT
 ```
 
-- Add or remove ports from any list as needed.
-- Useful if your environment has special rules for what’s considered “risky”.
+### Scoring Example
+
+| Scenario | Port | User | Bind | Version | Score | Risk |
+|----------|------|------|------|---------|-------|------|
+| MySQL 5.7 exposed | 3306 | root | 0.0.0.0 | old | 43.2 | 🔴 CRITICAL |
+| MySQL 8.0 localhost | 3306 | mysql | 127.0.0.1 | current | 0.96 | 🟢 LOW |
+| SSH key-only | 22 | root | LAN | current | 7.5 | 🟡 MEDIUM |
+| Redis no auth | 6379 | root | 0.0.0.0 | none | 24.0 | 🔴 HIGH |
+
+**Same port, different risk** — because context matters.
 
 ---
 
-## 🧪 Quick Security Checklist
+## 🔧 Configuration
 
-Use PORT WATCHER to:
-
-- ✅ Verify only expected services are listening
-- ✅ Check which user runs sensitive services (e.g., DB, SSH)
-- ✅ Spot unexpected or unknown ports quickly
-- ✅ Periodically audit servers for new or suspicious services
-
----
-
-## 📜 Full Script
+Copy the example config and customize:
 
 ```bash
-#!/bin/bash
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  🔐 Port Watcher - Security-Based Port Risk Analyzer         ║
-# ║                                                              ║
-# ║  🧑‍💻 Author     : RedVortex                                  ║
-# ║  🛡️ Purpose    : Monitors open ports, shows associated       ║
-# ║                  process, user, PID and categorizes risks.   ║
-# ║                                                              ║
-# ║  ⚔️ Security     : Rated as Low | Medium | High | Unknown     ║
-# ║  📌 Features     :                                           ║
-# ║     • Real-time port-to-process mapping                      ║
-# ║     • Risk classification based on security exposures        ║
-# ║     • Color-coded severity levels                            ║
-# ║     • Uses lsof + native shell only                          ║
-# ║                                                              ║
-# ║  📅 Version     : 1.0                                        ║
-# ║  🐧 Compatible  : Linux (Debian, Kali, Ubuntu, Arch, Fedora) ║
-# ╚══════════════════════════════════════════════════════════════╝
-
-# ━━━━━━━━━ COLOR DEFINITIONS ━━━━━━━━━ #
-RESET="\e[0m"
-BOLD="\e[1m"
-BOLD_RED="\e[1;31m"
-BOLD_GREEN="\e[1;32m"
-BOLD_YELLOW="\e[1;33m"
-BOLD_CYAN="\e[1;36m"
-# ━━━━━━━━━ COLOR DEFINITIONS ━━━━━━━━━ #
-
-risk_checking(){
-    local port="$1"
-    local low=(53 67 68 123 443 514 179 546 547 69)
-    local medium=(80 25 110 445 3389 389 636 135 2000 2001 587 995)
-    local high=(21 22 23 5900 5901 3306 6379 27017 5060 4786 161 162 445)
-
-    for p in "${low[@]}"; do [[ "$p" == "$port" ]] && echo -e "${BOLD_GREEN}LOW${RESET}" && return; done
-    for p in "${medium[@]}"; do [[ "$p" == "$port" ]] && echo -e "${BOLD_YELLOW}MEDIUM${RESET}" && return; done
-    for p in "${high[@]}"; do [[ "$p" == "$port" ]] && echo -e "${BOLD_RED}HIGH${RESET}" && return; done
-    echo -e "${BOLD_YELLOW}UNKNOWN${RESET}"
-}
-
-echo -e "${BOLD_CYAN}\n  🔍 PORT WATCHER - Security Based Listing\n${RESET}"
-echo -e "${BOLD_YELLOW}|  PORT  |  PID  | USER | PROCESS | RISK LEVEL |${RESET}"
-
-sudo lsof -i -P -n | grep LISTEN | awk '{print $1, $2, $3, $9}' | while read process pid user addr
-do
-    ip=$(echo $addr | cut -d':' -f1)
-    port=$(echo $addr | cut -d':' -f2)
-    [[ -z "$port" ]] && continue
-
-    risk=$(risk_checking "$port")
-    echo "|  $port  |  $pid  |  $user  |  $process  |  $risk  |"
-done
+mkdir -p ~/.config/port-watcher
+cp config/ports.conf.example ~/.config/port-watcher/ports.conf
+# Edit to add/remove ports, adjust scoring weights, etc.
 ```
+
+Config supports:
+- 9 risk categories (CRITICAL, HIGH, MEDIUM, LOW, CLOUD, DATABASE, CONTAINER, IOT, RESEARCH)
+- Scoring weights for user type (root, known user, unknown)
+- Scoring weights for network binding (ALL, LOCAL, LAN)
+- Display settings (color, table style, timestamp)
+- Alert thresholds
+
+---
+
+## 🛠 Installation
+
+### Option 1: Makefile (Recommended)
+
+```bash
+sudo make install    # Installs to /usr/local/bin/
+make install-local   # Installs to ~/.local/bin/
+```
+
+### Option 2: Manual
+
+```bash
+chmod +x src/port-watcher.sh
+sudo cp src/port-watcher.sh /usr/local/bin/port-watcher
+```
+
+### Option 3: One-liner
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/anonymous777999/Bash-Tools/main/install.sh | bash
+```
+
+### Requirements
+
+- `bash` 4.0+
+- `lsof` **or** `ss` (one required for port collection)
+- `grep`, `awk` (standard Unix tools)
+
+---
+
+## 🧪 Example Output
+
+```
+╔═══════════════════════════════════════════════════════════════╗
+║  🔍 PORT WATCHER v2.0.0 — 2026-07-29 04:36:15               ║
+╚═══════════════════════════════════════════════════════════════╝
+
+┌───────┬──────┬──────────┬──────────────────┬────────────┬──────────┐
+│ PORT  │ PID  │ USER     │ PROCESS          │ BIND       │ RISK     │
+├───────┼──────┼──────────┼──────────────────┼────────────┼──────────┤
+│ 22    │ 1234 │ root     │ sshd             │ 0.0.0.0    │ HIGH     │
+│ 80    │ 2345 │ www-data │ nginx            │ 0.0.0.0    │ MEDIUM   │
+│ 5432  │ 3456 │ postgres │ postgres         │ 127.0.0.1  │ LOW      │
+│ 6379  │ 4567 │ root     │ redis-server     │ 0.0.0.0    │ CRITICAL │
+└───────┴──────┴──────────┴──────────────────┴────────────┴──────────┘
+```
+
+---
+
+## 📋 Port Classification
+
+| Category | Examples | Risk Level |
+|----------|----------|------------|
+| **CRITICAL** | SSH (22), MySQL (3306), Redis (6379), MongoDB (27017), RDP (3389), PostgreSQL (5432) | 🔴 |
+| **HIGH** | HTTP (80), HTTPS (443), SMTP (25), LDAP (389), SNMP (161), SMB (445) | 🟠 |
+| **MEDIUM** | DNS (53), DHCP (67), NTP (123), FTP (21 data) | 🟡 |
+| **LOW** | CUPS (631), mDNS (5353), UPnP (1900) | 🟢 |
+| **CLOUD/NATIVE** | Docker (2375), Kubernetes (6443, 10250), Vault (8200), Consul (8500) | 🔴 |
+| **DATABASE** | MSSQL (1433), Oracle (1521), Cassandra (9042), Elasticsearch (9200) | 🔴 |
+| **CONTAINER** | Docker API (2375), K8s kubelet (10250) | 🔴 |
+| **IOT/SCADA** | Modbus (502), Siemens S7 (102), EtherNet/IP (44818) | 🟠 |
+
+---
+
+## 🔐 Use Cases
+
+### Red Team / Penetration Testing
+- Post-exploitation: identify lateral movement vectors
+- Find exposed databases, management interfaces, and cloud APIs
+- Discover privilege escalation paths (root-owned services on 0.0.0.0)
+
+### Blue Team / Incident Response
+- Continuous monitoring with change detection
+- Alert on new unauthorized services (possible backdoors)
+- Verify hardening compliance
+
+### DevOps / Site Reliability
+- Monitor for unexpected services after deployments
+- Validate firewall rules are working
+- Container security auditing
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! 🎉
-
-- Add more ports to the risk lists
-- Improve output formatting
-- Add flags (e.g., JSON output, filter by risk, etc.)
-
-Feel free to open:
-- 🐛 Issues
-- 🔀 Pull Requests
+PRs and issues welcome! Areas for contribution:
+- Add more ports to risk categories
+- Improve output format parsers
+- Add Prometheus/Grafana metrics output
+- Add email/webhook alerting
+- Add Docker container scanning support
 
 ---
 
 ## ⚠️ Disclaimer
 
-This tool is meant for **basic security awareness and monitoring**, not as a full security scanner or vulnerability assessment tool.  
-Always follow best practices and use proper security tools in production environments.
+This tool is for **authorized security testing and monitoring only**. Unauthorized use against systems you do not own or have explicit permission to test is illegal.
 
 ---
 
 <p align="center">
-  Made with 🧠 + 🛡️ in Bash
+  Built with 🧠 + 🛡️ by RedVortex — MIT License
 </p>
-```

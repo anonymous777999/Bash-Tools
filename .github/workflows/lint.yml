@@ -1,0 +1,36 @@
+name: Lint
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'src/**/*.sh'
+      - 'install.sh'
+      - '.github/workflows/lint.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'src/**/*.sh'
+      - 'install.sh'
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: './src'
+          severity: style
+          format: gcc
+
+      - name: Check Bash Syntax
+        run: |
+          for f in src/*.sh; do
+            echo "Checking syntax: $f"
+            bash -n "$f"
+          done
+          echo "✅ All scripts have valid syntax"

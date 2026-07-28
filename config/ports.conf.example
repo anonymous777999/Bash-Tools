@@ -1,0 +1,75 @@
+# ═══════════════════════════════════════════════════════════════
+#  Port Watcher v2 — Risk Configuration
+#  Author: RedVortex
+#  License: MIT
+# ═══════════════════════════════════════════════════════════════
+#
+# Risk categories by service profile.
+# A port can appear in only ONE list. The scoring engine uses
+# the first match. If a port isn't found here, it's UNKNOWN.
+#
+# To customize: copy this file to ~/.config/port-watcher/ports.conf
+# and run port-watcher --config ~/.config/port-watcher/ports.conf
+
+# ─── CRITICAL (CVE-prone, high-value targets, common RCE vectors) ───
+# Remote code execution or data exfiltration via default/config weaknesses.
+CRITICAL=(21 22 23 445 3306 3389 5432 6379 27017 1433 1521 5900 5901 4444 6666 6667 6668 6669)
+
+# ─── HIGH (Common attack surface, frequently exploited) ───
+# Web servers, mail relays, remote management, databases.
+HIGH=(80 443 8080 8443 25 587 993 110 143 465 389 636 161 162 137 138 139 135 993 995 993)
+
+# ─── MEDIUM (Should be monitored, moderate risk) ───
+# Infrastructure services, file sharing, time sync.
+MEDIUM=(53 67 68 69 123 514 179 546 547 548 554 873 2049 111 177 427)
+
+# ─── LOW (Typically low-risk infrastructure) ───
+# DHCP, NTP, DNS, common auxiliary services.
+LOW=(631 3283 5353 8612 1124 1900 4500 1701 1723 1194 500 501)
+
+# ─── CLOUD/NATIVE (Modern stack — critical if exposed) ───
+# Docker, Kubernetes, Cloud APIs, Service Mesh.
+CLOUD=(2375 2376 6443 10250 10255 8200 8300 8500 4646 4647 9090 10000 30000 31000 32000 8888 8472 4789 7946 10256 10257 10259 2379 2380 8443 7443)
+
+# ─── DATABASE (High-value targets — data exfiltration risk) ───
+DATABASE=(3306 5432 5433 5434 6379 6380 27017 27018 27019 1433 1434 1521 1522 9042 9160 9200 9300 11211 11222 210 256 260 264 6380 7474 7687 9092 61616 61617)
+
+# ─── CONTAINER/ORCHESTRATION (RCE / lateral movement vectors) ───
+CONTAINER=(2375 2376 6443 10250 10255 8472 4789 7946 8888 30000 31000 10256 10257 10259)
+
+# ─── INDUSTRIAL/IOT/SCADA (OT security critical) ───
+IOT=(502 102 20000 44818 2222 4840 80 443 161 162 1911 1962 2404 2455)
+
+# ─── BUG BOUNTY / HACKING (Often monitored by researchers) ───
+# Shodan, Censys, Project Sonar, scanning infrastructure.
+RESEARCH=(7777 7778 7779 8080 8081 8082 8443 8888 9000 9001 9002)
+
+# ─── Scoring weights ───
+# These multiply the base risk to produce a dynamic score
+
+# User weight — the user running the process affects risk significantly
+ROOT_USER_WEIGHT=1.5         # root processes are privilege escalation targets
+KNOWN_USER_WEIGHT=0.8        # www-data, nobody, daemon — limited blast radius
+UNKNOWN_USER_WEIGHT=1.2      # unknown user = potential persistence
+
+# Network binding weight — exposure changes everything
+BIND_ALL_WEIGHT=2.0          # 0.0.0.0 / [::] — accessible from any network
+BIND_LOCAL_WEIGHT=0.3        # 127.0.0.1 / localhost — only local access
+BIND_LAN_WEIGHT=1.0          # 192.168.x.x / 10.x.x.x / internal IP
+BIND_UNKNOWN_WEIGHT=1.0      # can't determine binding
+
+# Version age weight — older versions have more CVEs
+VERSION_NONE_WEIGHT=1.0      # no version info (assume unknown)
+VERSION_CURRENT_WEIGHT=0.5   # known recent version (within 1 year)
+VERSION_OUTDATED_WEIGHT=1.5  # known old version (1-3 years)
+VERSION_CRITICAL_WEIGHT=2.5  # known EOL/vulnerable version (3+ years)
+
+# Display settings
+SHOW_HEADER=true
+TABLE_STYLE="unicode"        # unicode, ascii, markdown
+COLOR=true
+TIMESTAMP=true
+
+# Alert thresholds
+ALERT_CRITICAL_SCORE=30      # Score above this triggers CRITICAL alert
+ALERT_HIGH_SCORE=15          # Score above this triggers HIGH alert
