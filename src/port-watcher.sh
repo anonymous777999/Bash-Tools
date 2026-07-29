@@ -119,6 +119,9 @@ declare -A RISK_COLORS
 SHOW_PLUGINS=false
 SHOW_ATTACK=false
 SHOW_ANOMALIES=false
+SHOW_SCORE=false
+CLI_AUTO_RESPONSE=false
+CLI_IPS_LEVEL=""
 
 # ─── SQLITE DATABASE GLOBALS ───
 DB_PATH="$HOME/.config/port-watcher/history.db"
@@ -157,6 +160,9 @@ ${C_BOLD}Options:${C_RESET}
       --plugins            List loaded plugins
       --attack             Show MITRE ATT&CK mapping table
       --anomalies          Show AI anomaly detection report
+      --score              Show Attack Surface Score report (A-F grade)
+      --auto-response      Enable automated IPS response (block CRITICAL ports)
+      --auto-response-level <level>  Auto-response threshold: CRITICAL, HIGH, ALL (default: CRITICAL)
       --version            Show version information
   -h, --help               Show this help message
 
@@ -176,6 +182,8 @@ ${C_BOLD}Examples:${C_RESET}
   ${SCRIPT_NAME} --plugins                    # List plugins
   ${SCRIPT_NAME}  --attack                     # MITRE ATT&CK table
   ${SCRIPT_NAME} --anomalies                  # Anomaly detection report
+  ${SCRIPT_NAME} --score                      # Attack Surface Score report
+  ${SCRIPT_NAME} --auto-response              # Auto-block CRITICAL ports
   ${SCRIPT_NAME} --syslog                     # Log to syslog
 
 ${C_BOLD}Risk Levels:${C_RESET}
@@ -195,6 +203,9 @@ ${C_BOLD}Plugins:${C_RESET}
   --plugins                List loaded plugins
   --attack                 Show MITRE ATT&CK technique mapping
   --anomalies              Show AI anomaly detection report (process/user/bind changes)
+  --score                  Show Attack Surface Score (A–F grade with remediations)
+  --auto-response          Enable automated IPS response (iptables block of CRITICAL ports)
+  --auto-response-level    Set auto-response threshold: CRITICAL, HIGH, or ALL
 
 ${C_BOLD}Configuration:${C_RESET}
   ~/.config/port-watcher/ports.conf           User config
@@ -280,6 +291,17 @@ parse_args() {
         ;;
       --anomalies)
         SHOW_ANOMALIES=true
+        ;;
+      --score)
+        SHOW_SCORE=true
+        ;;
+      --auto-response)
+        CLI_AUTO_RESPONSE=true
+        ;;
+      --auto-response-level)
+        shift
+        CLI_IPS_LEVEL="${1^^}"
+        CLI_AUTO_RESPONSE=true
         ;;
       --version)
         echo "Port Watcher v${VERSION}"
@@ -1185,7 +1207,7 @@ main() {
     exit 0
   fi
 
-  # If --anomalies is the only flag, we'll show the report after the scan
+  # If --anomalies or --score is the only flag, we'll show the report after the scan
 
   # Check dependencies
   if ! command -v lsof &>/dev/null && ! command -v ss &>/dev/null; then
@@ -1220,6 +1242,16 @@ main() {
   if declare -f run_anomaly_detection &>/dev/null; then
     load_anomaly_profile 2>/dev/null || true
     run_anomaly_detection "$port_data" 2>/dev/null || true
+  fi
+
+  # Calculate Attack Surface Score (if plugin loaded)
+  if declare -f calculate_attack_surface &>/dev/null; then
+    calculate_attack_surface "$port_data" 2>/dev/null || true
+  fi
+
+  # Run IPS auto-response (if plugin loaded and enabled)
+  if declare -f run_ips_response &>/dev/null; then
+    run_ips_response "$port_data" 2>/dev/null || true
   fi
 
   # Run differential if baseline provided
@@ -1270,6 +1302,11 @@ main() {
   # Show anomaly report if requested
   if $SHOW_ANOMALIES && declare -f show_anomaly_report &>/dev/null; then
     show_anomaly_report
+  fi
+
+  # Show Attack Surface Score report if requested
+  if $SHOW_SCORE && declare -f show_score_report &>/dev/null; then
+    show_score_report
   fi
 
   # Record scan to database if available (call plugin function directly)
