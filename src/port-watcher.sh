@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Port Watcher v2 — Advanced Security Port Risk Analyzer
+#  Port Watcher v3 — Advanced Security Port Risk Analyzer
 #  ═════════════════════════════════════════════════════════════════════════════
 #  Author  : RedVortex
-#  Version : 2.0.0
+#  Version : 3.0.0
 #  License : MIT
 #  Purpose : Monitors open ports, maps processes/users/PIDs, and performs
 #            dynamic risk scoring based on port, user, network binding, and
@@ -19,6 +19,9 @@
 #    • Syslog integration for centralized monitoring
 #    • HTML report generation
 #    • Config file support (~/.config/port-watcher/ports.conf)
+#    • 🆕 Plugin system with drop-in extensibility
+#    • 🆕 MITRE ATT&CK mapping for every finding
+#    • 🆕 SQLite historical database with trend/history/timeline queries
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -o errexit
@@ -27,7 +30,7 @@ set -o nounset
 IFS=$'\n\t'
 
 # ─── VERSION & METADATA ───
-VERSION="2.0.0"
+VERSION="3.0.0"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_PATHS=(
@@ -112,6 +115,18 @@ ALL_PROCESSES=()
 declare -A RISK_NAMES
 declare -A RISK_COLORS
 
+# ─── PLUGIN SYSTEM GLOBALS ───
+SHOW_PLUGINS=false
+SHOW_ATTACK=false
+
+# ─── SQLITE DATABASE GLOBALS ───
+DB_PATH="$HOME/.config/port-watcher/history.db"
+CLI_DB_COMMAND=""
+CLI_HISTORY=""
+CLI_TREND=""
+CLI_TIMELINE=false
+DB_AVAILABLE=false
+
 # ─── FUNCTIONS ───
 
 # Print usage information
@@ -134,6 +149,12 @@ ${C_BOLD}Options:${C_RESET}
       --no-color           Disable colored output
       --syslog             Log findings to syslog
       --baseline <file>    Save/compare against a baseline for differential
+      --db <path>          SQLite database path (default: ~/.config/port-watcher/history.db)
+      --history <port>     Show scan history for a specific port
+      --trend [days]       Show risk trend over N days (default: 7)
+      --timeline           Show alert timeline
+      --plugins            List loaded plugins
+      --attack             Show MITRE ATT&CK mapping table
       --version            Show version information
   -h, --help               Show this help message
 
@@ -148,6 +169,10 @@ ${C_BOLD}Examples:${C_RESET}
   ${SCRIPT_NAME} --user root                  # Filter by user
   ${SCRIPT_NAME} --config ./my-ports.conf     # Custom config
   ${SCRIPT_NAME} --baseline baseline.json     # Differential scan
+  ${SCRIPT_NAME} --history 6379               # Port history from DB
+  ${SCRIPT_NAME} --trend 14                   # 14-day risk trend
+  ${SCRIPT_NAME} --plugins                    # List plugins
+  ${SCRIPT_NAME} --attack                     # MITRE ATT&CK table
   ${SCRIPT_NAME} --syslog                     # Log to syslog
 
 ${C_BOLD}Risk Levels:${C_RESET}
@@ -157,9 +182,21 @@ ${C_BOLD}Risk Levels:${C_RESET}
   ${C_GREEN}LOW${C_RESET}       Low risk infrastructure services
   ${C_DIM}UNKNOWN${C_RESET}   Port not classified
 
+${C_BOLD}Database Commands:${C_RESET}
+  --history <port>         Show detailed scan history for a port
+  --trend [days]           Show risk trend over time (default: 7 days)
+  --timeline               Show alert/incident timeline
+  --db <path>              Specify custom database path
+
+${C_BOLD}Plugins:${C_RESET}
+  --plugins                List loaded plugins
+  --attack                 Show MITRE ATT&CK technique mapping
+
 ${C_BOLD}Configuration:${C_RESET}
-  ~/.config/port-watcher/ports.conf    User config
-  /etc/port-watcher/ports.conf         System config
+  ~/.config/port-watcher/ports.conf           User config
+  /etc/port-watcher/ports.conf                System config
+  ~/.config/port-watcher/plugins/enabled/     User plugins
+  /etc/port-watcher/plugins/enabled/          System plugins
 EOF
 }
 
@@ -215,10 +252,35 @@ parse_args() {
         BASELINE_FILE="$1"
         DIFFERENTIAL=true
         ;;
+      --db)
+        shift
+        CLI_DB_COMMAND="$1"
+        DB_PATH="$1"
+        ;;
+      --history)
+        shift
+        CLI_HISTORY="$1"
+        ;;
+      --trend)
+        shift
+        CLI_TREND="${1:-7}"
+        ;;
+      --timeline)
+        CLI_TIMELINE=true
+        ;;
+      --plugins)
+        SHOW_PLUGINS=true
+        ;;
+      --attack)
+        SHOW_ATTACK=true
+        ;;
       --version)
         echo "Port Watcher v${VERSION}"
         echo "Author: RedVortex"
         echo "License: MIT"
+        echo "Database: ${DB_PATH}"
+        echo ""
+        echo "Note: Plugin count shown after loading (run without --version)"
         exit 0
         ;;
       -h|--help)
@@ -532,20 +594,43 @@ output_table() {
       echo ""
     fi
 
+    # Check if MITRE ATT&CK plugin is loaded (adds an extra column)
+    local has_attack=false
+    declare -f mitre_lookup &>/dev/null && has_attack=true
+
     if [[ "$TABLE_STYLE" == "unicode" ]]; then
-      printf "%s\n" "$(cecho "$C_BOLD" "$(printf '┌───────┬──────┬──────────┬──────────────────┬────────────┬──────────┐')")"
-      printf "%-s│ %s │ %s │ %-16s │ %-12s │ %-8s │\n" \
-        "$(cecho "$C_BOLD" "│")" \
-        "$(cecho "$C_BOLD_YELLOW" "PORT")" \
-        "$(cecho "$C_BOLD_YELLOW" "PID")" \
-        "$(cecho "$C_BOLD_YELLOW" "USER")" \
-        "$(cecho "$C_BOLD_YELLOW" "PROCESS")" \
-        "$(cecho "$C_BOLD_YELLOW" "BIND")" \
-        "$(cecho "$C_BOLD_YELLOW" "RISK")"
-      printf "%s\n" "$(cecho "$C_BOLD" "$(printf '├───────┼──────┼──────────┼──────────────────┼────────────┼──────────┤')")"
+      if $has_attack; then
+        printf "%s\n" "$(cecho "$C_BOLD" "$(printf '┌───────┬──────┬──────────┬──────────────────┬────────────┬──────────┬──────────┐')")"
+        printf "%-s│ %s │ %s │ %-16s │ %-12s │ %-8s │ %-8s │\n" \
+          "$(cecho "$C_BOLD" "│")" \
+          "$(cecho "$C_BOLD_YELLOW" "PORT")" \
+          "$(cecho "$C_BOLD_YELLOW" "PID")" \
+          "$(cecho "$C_BOLD_YELLOW" "USER")" \
+          "$(cecho "$C_BOLD_YELLOW" "PROCESS")" \
+          "$(cecho "$C_BOLD_YELLOW" "BIND")" \
+          "$(cecho "$C_BOLD_YELLOW" "RISK")" \
+          "$(cecho "$C_BOLD_YELLOW" "ATT&CK")"
+        printf "%s\n" "$(cecho "$C_BOLD" "$(printf '├───────┼──────┼──────────┼──────────────────┼────────────┼──────────┼──────────┤')")"
+      else
+        printf "%s\n" "$(cecho "$C_BOLD" "$(printf '┌───────┬──────┬──────────┬──────────────────┬────────────┬──────────┐')")"
+        printf "%-s│ %s │ %s │ %-16s │ %-12s │ %-8s │\n" \
+          "$(cecho "$C_BOLD" "│")" \
+          "$(cecho "$C_BOLD_YELLOW" "PORT")" \
+          "$(cecho "$C_BOLD_YELLOW" "PID")" \
+          "$(cecho "$C_BOLD_YELLOW" "USER")" \
+          "$(cecho "$C_BOLD_YELLOW" "PROCESS")" \
+          "$(cecho "$C_BOLD_YELLOW" "BIND")" \
+          "$(cecho "$C_BOLD_YELLOW" "RISK")"
+        printf "%s\n" "$(cecho "$C_BOLD" "$(printf '├───────┼──────┼──────────┼──────────────────┼────────────┼──────────┤')")"
+      fi
     else
-      echo "PORT   PID    USER       PROCESS           BIND          RISK"
-      echo "────   ────   ────       ───────           ────          ────"
+      if $has_attack; then
+        echo "PORT   PID    USER       PROCESS           BIND          RISK       ATT&CK"
+        echo "────   ────   ────       ───────           ────          ────       ──────"
+      else
+        echo "PORT   PID    USER       PROCESS           BIND          RISK"
+        echo "────   ────   ────       ───────           ────          ────"
+      fi
     fi
     printed_header=true
   fi
@@ -565,11 +650,37 @@ output_table() {
     [[ -n "$FILTER_PROCESS" ]] && ! in_array "$process" ${FILTER_PROCESS//,/ } && continue
     [[ -n "$FILTER_USER" ]] && ! in_array "$user" ${FILTER_USER//,/ } && continue
 
+    # Check if MITRE ATT&CK plugin is loaded
+    local has_attack=false
+    declare -f mitre_lookup &>/dev/null && has_attack=true
+
+    # Get MITRE ATT&CK technique for this port
+    local mitre_id="" mitre_display=""
+    if $has_attack; then
+      local mitre_result=""
+      mitre_result="$(mitre_lookup "$process" "$port" "$bind_type" "$risk" 2>/dev/null || true)"
+      if [[ -n "$mitre_result" ]]; then
+        mitre_id="$(echo "$mitre_result" | cut -d: -f1)"
+        mitre_display="$mitre_id"
+      else
+        mitre_display="—"
+      fi
+    fi
+
     if [[ "$TABLE_STYLE" == "unicode" ]]; then
-      printf "│ %-5s │ %-4s │ %-8s │ %-16s │ %-10s │ %s%-6s${C_RESET} │\n" \
-        "$port" "$pid" "$user" "$process" "$bind_addr" "$color" "$risk"
+      if $has_attack; then
+        printf "│ %-5s │ %-4s │ %-8s │ %-16s │ %-10s │ %s%-6s${C_RESET} │ %-8s │\n" \
+          "$port" "$pid" "$user" "$process" "$bind_addr" "$color" "$risk" "$mitre_display"
+      else
+        printf "│ %-5s │ %-4s │ %-8s │ %-16s │ %-10s │ %s%-6s${C_RESET} │\n" \
+          "$port" "$pid" "$user" "$process" "$bind_addr" "$color" "$risk"
+      fi
     else
-      echo " $(printf '%-5s' "$port") $(printf '%-5s' "$pid") $(printf '%-8s' "$user") $(printf '%-16s' "$process") $(printf '%-10s' "$bind_addr") $(cecho "$color" "$risk")"
+      if $has_attack; then
+        echo " $(printf '%-5s' "$port") $(printf '%-5s' "$pid") $(printf '%-8s' "$user") $(printf '%-16s' "$process") $(printf '%-10s' "$bind_addr") $(cecho "$color" "$risk") $(printf '%-8s' "$mitre_display")"
+      else
+        echo " $(printf '%-5s' "$port") $(printf '%-5s' "$pid") $(printf '%-8s' "$user") $(printf '%-16s' "$process") $(printf '%-10s' "$bind_addr") $(cecho "$color" "$risk")"
+      fi
     fi
 
     # Send to syslog if enabled
@@ -577,7 +688,13 @@ output_table() {
   done <<< "$data"
 
   if $SHOW_HEADER && [[ "$TABLE_STYLE" == "unicode" ]]; then
-    printf "%s\n" "$(cecho "$C_DIM" "$(printf '└───────┴──────┴──────────┴──────────────────┴────────────┴──────────┘')")"
+    local has_attack=false
+    declare -f mitre_lookup &>/dev/null && has_attack=true
+    if $has_attack; then
+      printf "%s\n" "$(cecho "$C_DIM" "$(printf '└───────┴──────┴──────────┴──────────────────┴────────────┴──────────┴──────────┘')")"
+    else
+      printf "%s\n" "$(cecho "$C_DIM" "$(printf '└───────┴──────┴──────────┴──────────────────┴────────────┴──────────┘')")"
+    fi
   fi
 }
 
@@ -598,6 +715,21 @@ output_json() {
 
     [[ -n "$FILTER_RISK" && "$risk" != "$FILTER_RISK" ]] && continue
 
+    # Add MITRE ATT&CK fields if plugin loaded
+    local mitre_json=""
+    if declare -f mitre_lookup &>/dev/null; then
+      local mitre_result mitre_id mitre_name mitre_tactic
+      mitre_result="$(mitre_lookup "$process" "$port" "$bind_type" "$risk" 2>/dev/null || true)"
+      if [[ -n "$mitre_result" ]]; then
+        mitre_id="$(echo "$mitre_result" | cut -d: -f1)"
+        mitre_name="$(echo "$mitre_result" | cut -d: -f2)"
+        mitre_tactic="$(echo "$mitre_result" | cut -d: -f3)"
+        mitre_json=", "mitre_attack_id": "$mitre_id", "mitre_technique": "$mitre_name", "mitre_tactic": "$mitre_tactic""
+      else
+        mitre_json=", "mitre_attack_id": null, "mitre_technique": null, "mitre_tactic": null"
+      fi
+    fi
+
     $first || echo ","
     first=false
     cat <<JSON
@@ -611,7 +743,7 @@ output_json() {
     "bind_address": "$bind_addr",
     "bind_type": "$bind_type",
     "risk": "$risk",
-    "score": $score,
+    "score": $score$mitre_json,
     "tool": "port-watcher-v$VERSION"
   }
 JSON
@@ -624,7 +756,12 @@ JSON
 output_csv() {
   local data="$1"
 
-  echo "timestamp,port,pid,user,process,protocol,bind_address,bind_type,risk,score"
+  # Add MITRE ATT&CK header if plugin loaded
+  if declare -f mitre_lookup &>/dev/null; then
+    echo "timestamp,port,pid,user,process,protocol,bind_address,bind_type,risk,score,mitre_attack_id,mitre_technique,mitre_tactic"
+  else
+    echo "timestamp,port,pid,user,process,protocol,bind_address,bind_type,risk,score"
+  fi
   while IFS='|' read -r process pid user proto bind_addr port; do
     [[ -z "$port" ]] && continue
     local risk_info score risk bind_type
@@ -636,7 +773,19 @@ output_csv() {
 
     [[ -n "$FILTER_RISK" && "$risk" != "$FILTER_RISK" ]] && continue
 
-    echo "$ts,$port,${pid:-0},${user:-unknown},${process:-unknown},${proto:-tcp},$bind_addr,$bind_type,$risk,$score"
+    # Add MITRE fields if plugin loaded
+    if declare -f mitre_lookup &>/dev/null; then
+      local mitre_result mitre_id mitre_name mitre_tactic
+      mitre_result="$(mitre_lookup "$process" "$port" "$bind_type" "$risk" 2>/dev/null || true)"
+      if [[ -n "$mitre_result" ]]; then
+        mitre_id="$(echo "$mitre_result" | cut -d: -f1)"
+        mitre_name="$(echo "$mitre_result" | cut -d: -f2)"
+        mitre_tactic="$(echo "$mitre_result" | cut -d: -f3)"
+      fi
+      echo "$ts,$port,${pid:-0},${user:-unknown},${process:-unknown},${proto:-tcp},$bind_addr,$bind_type,$risk,$score,${mitre_id:-},${mitre_name:-},${mitre_tactic:-}"
+    else
+      echo "$ts,$port,${pid:-0},${user:-unknown},${process:-unknown},${proto:-tcp},$bind_addr,$bind_type,$risk,$score"
+    fi
   done <<< "$data"
 }
 
@@ -664,6 +813,19 @@ output_html() {
 
     [[ -n "$FILTER_RISK" && "$risk" != "$FILTER_RISK" ]] && continue
 
+    # Add MITRE ATT&CK fields if plugin loaded
+    local mitre_cell=""
+    if declare -f mitre_lookup &>/dev/null; then
+      local mitre_result mitre_id
+      mitre_result="$(mitre_lookup "$process" "$port" "$bind_type" "$risk" 2>/dev/null || true)"
+      if [[ -n "$mitre_result" ]]; then
+        mitre_id="$(echo "$mitre_result" | cut -d: -f1)"
+        mitre_cell="<td style=\"color:#A78BFA; font-size:0.8rem;\">$mitre_id</td>"
+      else
+        mitre_cell="<td style=\"color:#334155;\">—</td>"
+      fi
+    fi
+
     rows+="    <tr>
       <td>$ts</td>
       <td><strong>$port</strong></td>
@@ -674,9 +836,14 @@ output_html() {
       <td>$bind_type</td>
       <td style=\"color:$risk_color_html; font-weight:bold;\">$risk</td>
       <td>$score</td>
+      $mitre_cell
     </tr>
 "
   done <<< "$data"
+
+  # Determine if MITRE column should be in header
+  local mitre_header=""
+  declare -f mitre_lookup &>/dev/null && mitre_header="<th>ATT&CK</th>"
 
   cat <<HTML
 <!DOCTYPE html>
@@ -747,6 +914,7 @@ output_html() {
         <th>Exposure</th>
         <th>Risk</th>
         <th>Score</th>
+        $mitre_header
       </tr>
     </thead>
     <tbody>
@@ -832,6 +1000,119 @@ watch_mode() {
   done
 }
 
+# ─── PLUGIN SYSTEM ───
+
+# Source the plugin loader (which discovers and loads all plugin hooks)
+PLUGIN_DIR="$SCRIPT_DIR/plugins"
+if [[ -f "$PLUGIN_DIR/loader.sh" ]]; then
+  source "$PLUGIN_DIR/loader.sh"
+else
+  # Also check relative to script if moved
+  ALT_PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/src/plugins"
+  [[ -f "$ALT_PLUGIN_DIR/loader.sh" ]] && source "$ALT_PLUGIN_DIR/loader.sh"
+fi
+
+# Show MITRE ATT&CK mapping table (from the mitre-attack plugin)
+show_attack_mapping() {
+  echo ""
+  cecho "$C_BOLD_CYAN" "╔═══════════════════════════════════════════════════════════════╗"
+  cecho "$C_BOLD_CYAN" "║  🎯 MITRE ATT&CK Technique Mapping                          ║"
+  cecho "$C_BOLD_CYAN" "╚═══════════════════════════════════════════════════════════════╝"
+  echo ""
+  cecho "$C_DIM" "Techniques map port/process/bind combinations to adversary tactics."
+  cecho "$C_DIM" "For the complete MITRE ATT&CK framework visit: https://attack.mitre.org"
+  echo ""
+
+  if [[ "$TABLE_STYLE" == "unicode" ]]; then
+    printf "│ %-6s │ %-18s │ %-28s │ %-18s │\n" \
+      "$(cecho "$C_BOLD_YELLOW" "PORT")" \
+      "$(cecho "$C_BOLD_YELLOW" "SERVICE")" \
+      "$(cecho "$C_BOLD_YELLOW" "ATT&CK TECHNIQUE")" \
+      "$(cecho "$C_BOLD_YELLOW" "TACTIC")"
+    echo "$(printf '├────────┼────────────────────┼──────────────────────────────┼────────────────────┤')"
+
+    # Only display if mitre-attack plugin was loaded
+    if declare -f mitre_lookup &>/dev/null; then
+      # For each known port/process combo in the mapping table
+      for key in "${!MITRE_ATTACK_MAP[@]}"; do
+        local value="${MITRE_ATTACK_MAP[$key]}"
+        local port="${key%%:*}"
+        local rest="${key#*:}"
+        local service="${rest%%:*}"
+        [[ "$port" == "*" ]] && port="*"
+        [[ "$service" == "*" ]] && service="*"
+
+        local tech_id="$(echo "$value" | cut -d: -f1)"
+        local tech_name="$(echo "$value" | cut -d: -f2)"
+        local tactic="$(echo "$value" | cut -d: -f3)"
+
+        printf "│ %-6s │ %-18s │ %-28s │ %-18s │\n" \
+          "$port" "$service" "${tech_id} — ${tech_name}" "$tactic"
+      done
+    fi
+
+    echo "$(printf '└────────┴────────────────────┴──────────────────────────────┴────────────────────┘')"
+  else
+    echo "PORT   SERVICE            ATT&CK TECHNIQUE                   TACTIC"
+    echo "────   ───────            ────────────────                   ──────"
+    if declare -f mitre_lookup &>/dev/null; then
+      for key in "${!MITRE_ATTACK_MAP[@]}"; do
+        local value="${MITRE_ATTACK_MAP[$key]}"
+        local port="${key%%:*}"
+        local rest="${key#*:}"
+        local service="${rest%%:*}"
+        local tech_id="$(echo "$value" | cut -d: -f1)"
+        local tech_name="$(echo "$value" | cut -d: -f2)"
+        local tactic="$(echo "$value" | cut -d: -f3)"
+        echo "$(printf '%-6s %-18s %-36s %-18s' "$port" "$service" "${tech_id} — ${tech_name}" "$tactic")"
+      done
+    fi
+  fi
+  echo ""
+}
+
+# Show loaded plugins
+show_plugins() {
+  echo ""
+  cecho "$C_BOLD_CYAN" "╔═══════════════════════════════════════════════════════════════╗"
+  cecho "$C_BOLD_CYAN" "║  🔌 Loaded Plugins                                           ║"
+  cecho "$C_BOLD_CYAN" "╚═══════════════════════════════════════════════════════════════╝"
+  echo ""
+
+  if [[ ${#PLUGINS_LOADED[@]} -eq 0 ]]; then
+    cecho "$C_DIM" "  No plugins loaded."
+    echo ""
+    cecho "$C_DIM" "  Place .sh files in ~/.config/port-watcher/plugins/enabled/"
+    cecho "$C_DIM" "  or in $PLUGIN_DIR/enabled/"
+    echo ""
+    return
+  fi
+
+  for plugin in "${PLUGINS_LOADED[@]}"; do
+    local has_collect=false has_analyze=false has_render_table=false has_render_json=false
+    declare -f "plugin_collect_${plugin}" &>/dev/null && has_collect=true
+    declare -f "plugin_analyze_${plugin}" &>/dev/null && has_analyze=true
+    declare -f "plugin_render_table_${plugin}" &>/dev/null && has_render_table=true
+    declare -f "plugin_render_json_${plugin}" &>/dev/null && has_render_json=true
+
+    local hooks=""
+    $has_collect && hooks+=" collect"
+    $has_analyze && hooks+=" analyze"
+    $has_render_table && hooks+=" render-table"
+    $has_render_json && hooks+=" render-json"
+
+    echo "  📦 ${plugin}"
+    echo "     Hooks:${hooks:- none}"
+    echo ""
+  done
+
+  cecho "$C_DIM" "  Plugin search paths:"
+  for dir in "${PLUGIN_DIRS[@]}"; do
+    echo "    • $dir"
+  done
+  echo ""
+}
+
 # ─── MAIN ───
 
 main() {
@@ -840,6 +1121,44 @@ main() {
 
   # Load config
   load_config
+
+  # Load plugins (after config so plugins can access config values)
+  load_plugins 2>/dev/null || true
+
+  # Set up cleanup trap
+  trap 'run_cleanup_hooks 2>/dev/null || true' EXIT
+
+  # Handle database-only commands (skip scan if just querying)
+  local db_cmd=false
+  if command -v sqlite3 &>/dev/null; then
+    DB_AVAILABLE=true
+    mkdir -p "$(dirname "$DB_PATH")" 2>/dev/null || true
+    if [[ -n "$CLI_HISTORY" ]]; then
+      show_port_history "$CLI_HISTORY"
+      db_cmd=true
+    fi
+    if [[ -n "$CLI_TREND" ]]; then
+      show_risk_trend "$CLI_TREND"
+      db_cmd=true
+    fi
+    if $CLI_TIMELINE; then
+      show_timeline 50
+      db_cmd=true
+    fi
+  fi
+  $db_cmd && exit 0
+
+  # Show plugins list if requested
+  if $SHOW_PLUGINS; then
+    show_plugins
+    exit 0
+  fi
+
+  # Show MITRE ATT&CK mapping if requested
+  if $SHOW_ATTACK; then
+    show_attack_mapping
+    exit 0
+  fi
 
   # Check dependencies
   if ! command -v lsof &>/dev/null && ! command -v ss &>/dev/null; then
@@ -857,7 +1176,7 @@ main() {
     echo ""
   fi
 
-  # Collect port data
+  # Collect port data (with plugin collect hooks)
   local port_data
   port_data="$(collect_ports)"
 
@@ -866,6 +1185,9 @@ main() {
     echo "No listening ports found or unable to collect data."
     exit 0
   fi
+
+  # Run plugin analyze hooks
+  run_analyze_hooks "$port_data" 2>/dev/null || true
 
   # Run differential if baseline provided
   if $DIFFERENTIAL && [[ -n "$BASELINE_FILE" && -f "$BASELINE_FILE" ]]; then
@@ -910,6 +1232,11 @@ main() {
         output_table "$port_data"
         ;;
     esac
+  fi
+
+  # Record scan to database if available (call plugin function directly)
+  if declare -f record_scan &>/dev/null; then
+    record_scan "$port_data" 2>/dev/null || true
   fi
 
   # Save baseline if requested

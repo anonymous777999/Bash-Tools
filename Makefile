@@ -1,6 +1,6 @@
 #!/usr/bin/env make
 # ═══════════════════════════════════════════════════════════════
-#  Port Watcher v2 — Makefile
+#  Port Watcher v3 — Makefile
 #  Author: RedVortex
 #  License: MIT
 # ═══════════════════════════════════════════════════════════════
@@ -19,23 +19,31 @@ all: lint test
 # ─── INSTALLATION ───
 
 install:
-	@echo "🔧 Installing Port Watcher v2..."
+	@echo "🔧 Installing Port Watcher v3..."
 	@install -d $(DESTDIR)$(INSTALL_DIR)
 	@install -m 755 src/$(SCRIPT_NAME).sh $(DESTDIR)$(INSTALL_DIR)/$(SCRIPT_NAME)
 	@install -d $(DESTDIR)$(CONFIG_DIR)
 	@install -m 644 config/ports.conf.example $(DESTDIR)$(CONFIG_DIR)/ports.conf.example
+	@# Install bundled plugins
+	@install -d $(DESTDIR)$(CONFIG_DIR)/plugins/enabled
+	@install -m 644 src/plugins/enabled/*.sh $(DESTDIR)$(CONFIG_DIR)/plugins/enabled/ 2>/dev/null || true
 	@echo "✅ Installed to $(DESTDIR)$(INSTALL_DIR)/$(SCRIPT_NAME)"
 	@echo "📝 Config example: $(DESTDIR)$(CONFIG_DIR)/ports.conf.example"
+	@echo "🔌 Plugins: $(DESTDIR)$(CONFIG_DIR)/plugins/enabled/"
 	@echo "ℹ️  Copy config: cp $(DESTDIR)$(CONFIG_DIR)/ports.conf.example ~/.config/port-watcher/ports.conf"
 
 install-local:
-	@echo "🔧 Installing Port Watcher v2 (user-local)..."
+	@echo "🔧 Installing Port Watcher v3 (user-local)..."
 	@mkdir -p $(INSTALL_DIR_LOCAL)
 	@install -m 755 src/$(SCRIPT_NAME).sh $(INSTALL_DIR_LOCAL)/$(SCRIPT_NAME)
 	@mkdir -p $(CONFIG_DIR_LOCAL)
 	@install -m 644 config/ports.conf.example $(CONFIG_DIR_LOCAL)/ports.conf.example
+	@# Install bundled plugins
+	@mkdir -p $(CONFIG_DIR_LOCAL)/plugins/enabled
+	@install -m 644 src/plugins/enabled/*.sh $(CONFIG_DIR_LOCAL)/plugins/enabled/ 2>/dev/null || true
 	@echo "✅ Installed to $(INSTALL_DIR_LOCAL)/$(SCRIPT_NAME)"
 	@echo "📝 Config: $(CONFIG_DIR_LOCAL)/ports.conf.example"
+	@echo "🔌 Plugins: $(CONFIG_DIR_LOCAL)/plugins/enabled/"
 
 uninstall:
 	@echo "🗑️  Removing Port Watcher..."
@@ -76,7 +84,7 @@ clean:
 # ─── HELP ───
 
 help:
-	@echo "Port Watcher v2 — Makefile"
+	@echo "Port Watcher v3 — Makefile"
 	@echo ""
 	@echo "Targets:"
 	@echo "  install        Install to system (requires sudo)"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
-#  Port Watcher v2 — Installer
+#  Port Watcher v3 — Installer
 #  Author: RedVortex
 #  License: MIT
 # ═══════════════════════════════════════════════════════════════
@@ -25,7 +25,7 @@ RESET='\033[0m'
 
 echo -e "${CYAN}${BOLD}"
 echo "  ╔══════════════════════════════════════╗"
-echo "  ║   Port Watcher v2 — Installer        ║"
+echo "  ║   Port Watcher v3 — Installer        ║"
 echo "  ║   Author: RedVortex                  ║"
 echo "  ╚══════════════════════════════════════╝"
 echo -e "${RESET}"
@@ -38,7 +38,7 @@ if ! command -v curl &>/dev/null && ! command -v git &>/dev/null; then
 fi
 
 # Download
-echo -e "${YELLOW}[*]${RESET} Downloading Port Watcher v2..."
+echo -e "${YELLOW}[*]${RESET} Downloading Port Watcher v3..."
 if command -v git &>/dev/null; then
   git clone --depth 1 "https://github.com/$REPO.git" "$TMP_DIR/repo" 2>/dev/null
 else
@@ -47,6 +47,12 @@ else
     -o "$TMP_DIR/repo/src/port-watcher.sh"
   curl -fsSL "https://raw.githubusercontent.com/$REPO/$BRANCH/config/ports.conf.example" \
     -o "$TMP_DIR/repo/config/ports.conf.example"
+  # Download plugins
+  mkdir -p "$TMP_DIR/repo/src/plugins/enabled"
+  curl -fsSL "https://raw.githubusercontent.com/$REPO/$BRANCH/src/plugins/enabled/10-mitre-attack.sh" \
+    -o "$TMP_DIR/repo/src/plugins/enabled/10-mitre-attack.sh" 2>/dev/null || true
+  curl -fsSL "https://raw.githubusercontent.com/$REPO/$BRANCH/src/plugins/enabled/20-database-sqlite.sh" \
+    -o "$TMP_DIR/repo/src/plugins/enabled/20-database-sqlite.sh" 2>/dev/null || true
 fi
 
 # Install script
@@ -74,7 +80,7 @@ rm -rf "$TMP_DIR"
 # Verify
 echo -e "${YELLOW}[*]${RESET} Verifying installation..."
 if command -v port-watcher &>/dev/null; then
-  echo -e "${GREEN}[✓]${RESET} Port Watcher v2 installed successfully!"
+  echo -e "${GREEN}[✓]${RESET} Port Watcher v3 installed successfully!"
   echo ""
   echo -e "  ${CYAN}Run:${RESET}  sudo port-watcher"
   echo -e "  ${CYAN}Help:${RESET}  port-watcher --help"
