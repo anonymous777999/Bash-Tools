@@ -1128,9 +1128,9 @@ plugin_init_ai-analysis() {
     local available
     available="$(_build_fallback_chain)"
     if [[ -n "$available" ]]; then
-      cecho "$C_DIM" "  [ai-analysis] Fallback chain: ${available}"
+      cecho "$C_DIM" "  [ai-analysis] Fallback chain: ${available}" >&2
     else
-      cecho "$C_DIM" "  [ai-analysis] No API keys configured. Use --ai-analyze for setup info."
+      cecho "$C_DIM" "  [ai-analysis] No API keys configured. Use --ai-analyze for setup info." >&2
     fi
   fi
 

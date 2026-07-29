@@ -147,81 +147,70 @@ detect_port_anomaly() {
   local process="$1" pid="$2" user="$3" proto="$4" bind_addr="$5" port="$6"
   local risk="${7:-}" score="${8:-}"
 
-  # Calculate risk/score if not provided
+  # Calculate risk/score inline (don't rely on external functions)
   if [[ -z "$risk" || -z "$score" ]]; then
-    local bind_type risk_info
-    bind_type="$(classify_bind "$bind_addr" 2>/dev/null || echo "UNKNOWN")"
-    risk_info="$(classify_port_risk "$port" 2>/dev/null || echo "UNKNOWN|3")"
-    score="$(calculate_score "$port" "$user" "$bind_type" "" 2>/dev/null || echo "0")"
-    risk="$(score_to_risk "$score" 2>/dev/null || echo "UNKNOWN")"
+    local bind_type="ALL"
+    case "$bind_addr" in
+      127.*|"localhost"|"::1") bind_type="LOCAL" ;;
+      10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*|192.168.*) bind_type="LAN" ;;
+      [fF][eE]80:*) bind_type="LAN" ;;
+      0.0.0.0|"::"|"*"|"") bind_type="ALL" ;;
+      *) bind_type="UNKNOWN" ;;
+    esac
+    local base=3
+    for p in 21 22 23 445 3306 3389 5432 6379 27017 1433 1521 5900 5901 4444 6666 6667 6668 6669 2375 2376 6443 10250 10255; do
+      [[ "$port" == "$p" ]] && { base=8; break; }
+    done
+    if [[ $base -eq 3 ]]; then
+      for p in 80 443 8080 8443 25 587 993 110 143 465 389 636 161 162 137 138 139 135; do
+        [[ "$port" == "$p" ]] && { base=6; break; }
+      done
+    fi
+    score=$(( base * 10 / 10 ))
   fi
 
   # Normalize process name
   local norm_process="${process##*/}"
   norm_process="$(echo "$norm_process" | tr '[:upper:]' '[:lower:]')"
 
-  # Build lookup key (try various combinations)
+  # Build lookup key
   local base_key="${port}|${norm_process}"
-  local wildcard_key="${port}|*"
-  local profile_entry=""
-
-  # Try exact match first, then wildcard
-  profile_entry="${ANOMALY_CURRENT_PROFILE[$base_key]:-}"
+  local profile_entry="${ANOMALY_CURRENT_PROFILE[$base_key]:-}"
   if [[ -z "$profile_entry" ]]; then
-    profile_entry="${ANOMALY_CURRENT_PROFILE[$wildcard_key]:-}"
+    profile_entry="${ANOMALY_CURRENT_PROFILE[${port}|*]:-}"
   fi
 
   # No profile entry → NEW PORT
   if [[ -z "$profile_entry" ]]; then
-    ANOMALY_DETECTIONS["$port"]="$NEW_PORT_WEIGHT|NEW|New port appeared: $port ($process)"
-    ANOMALY_TOTAL_SCORE=$((ANOMALY_TOTAL_SCORE + NEW_PORT_WEIGHT))
+    ANOMALY_DETECTIONS["$port"]="30|NEW|New port appeared: $port ($process)"
+    ANOMALY_TOTAL_SCORE=$((ANOMALY_TOTAL_SCORE + 30))
     ANOMALY_COUNT=$((ANOMALY_COUNT + 1))
     return
   fi
 
   # Parse profile entry: process|user|bind|risk|score|count
-  local prof_process prof_user prof_bind prof_risk prof_score prof_count
-  prof_process="$(echo "$profile_entry" | cut -d'|' -f1)"
-  prof_user="$(echo "$profile_entry" | cut -d'|' -f2)"
-  prof_bind="$(echo "$profile_entry" | cut -d'|' -f3)"
-  prof_risk="$(echo "$profile_entry" | cut -d'|' -f4)"
-  prof_score="$(echo "$profile_entry" | cut -d'|' -f5)"
-  prof_count="$(echo "$profile_entry" | cut -d'|' -f6)"
+  local prof_process prof_user prof_bind prof_risk
+  IFS='|' read -r prof_process prof_user prof_bind prof_risk _ _ <<< "$profile_entry"
 
   local anomaly_score=0
   local anomaly_details=()
 
   # Check PROCESS change (+35)
   if [[ "$norm_process" != "$prof_process" && "$prof_process" != "*" ]]; then
-    anomaly_score=$((anomaly_score + PROCESS_CHANGED_WEIGHT))
-    anomaly_details+=("Process changed: ${prof_process} → ${norm_process}")
+    anomaly_score=$((anomaly_score + 35))
+    anomaly_details+=("Process changed: ${prof_process} -> ${norm_process}")
   fi
 
   # Check USER change (+25)
   if [[ "$user" != "$prof_user" && "$prof_user" != "*" ]]; then
-    anomaly_score=$((anomaly_score + USER_CHANGED_WEIGHT))
-    anomaly_details+=("User changed: ${prof_user} → ${user}")
+    anomaly_score=$((anomaly_score + 25))
+    anomaly_details+=("User changed: ${prof_user} -> ${user}")
   fi
 
   # Check BIND change (+20)
   if [[ "$bind_addr" != "$prof_bind" && "$prof_bind" != "*" ]]; then
-    anomaly_score=$((anomaly_score + BIND_CHANGED_WEIGHT))
-    anomaly_details+=("Bind changed: ${prof_bind} → ${bind_addr}")
-  fi
-
-  # Check RISK jump (+10 per level)
-  if [[ -n "$prof_risk" && "$prof_risk" != "$risk" ]]; then
-    local risk_levels=("INFO" "LOW" "MEDIUM" "HIGH" "CRITICAL")
-    local prof_idx=-1 curr_idx=-1 idx
-    for idx in "${!risk_levels[@]}"; do
-      [[ "${risk_levels[$idx]}" == "$prof_risk" ]] && prof_idx=$idx
-      [[ "${risk_levels[$idx]}" == "$risk" ]] && curr_idx=$idx
-    done
-    if [[ $prof_idx -ge 0 && $curr_idx -gt $prof_idx ]]; then
-      local jump=$(( (curr_idx - prof_idx) * 10 ))
-      anomaly_score=$((anomaly_score + jump))
-      anomaly_details+=("Risk escalated: ${prof_risk} → ${risk}")
-    fi
+    anomaly_score=$((anomaly_score + 20))
+    anomaly_details+=("Bind changed: ${prof_bind} -> ${bind_addr}")
   fi
 
   # Record anomaly if detected
@@ -234,15 +223,10 @@ detect_port_anomaly() {
     ANOMALY_DETECTIONS["$port"]="$anomaly_score|CHANGE|${details_str}"
     ANOMALY_TOTAL_SCORE=$((ANOMALY_TOTAL_SCORE + anomaly_score))
     ANOMALY_COUNT=$((ANOMALY_COUNT + 1))
-
-    # Log to syslog for significant anomalies
-    if [[ $anomaly_score -ge $ANOMALY_WARN_THRESHOLD ]]; then
-      $USE_SYSLOG && logger -t "port-watcher-anomaly" "[${anomaly_score}pts] Port $port: ${details_str}"
-    fi
   fi
 }
 
-# Detect ports that are in profile but missing from current scan
+
 detect_missing_ports() {
   local current_data="$1"
   local current_ports=""
