@@ -43,7 +43,7 @@ THREAT_CACHE_TTL="${THREAT_CACHE_TTL:-86400}"  # 24 hours
 SHOW_THREAT_INTEL=false
 
 # ─── Runtime Data ───
-declare -A THREAT_FINDINGS            # "port|ip|service" → "source|score|detail"
+declare -g -A THREAT_FINDINGS            # "port|ip|service" → "source|score|detail"
 THREAT_INTEL_COUNT=0
 THREAT_INTEL_ALERTS=0
 

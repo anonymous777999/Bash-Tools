@@ -54,7 +54,7 @@ GROQ_API_KEY="${GROQ_API_KEY:-}"
 GEMINI_API_KEY="${GEMINI_API_KEY:-}"
 
 # ─── Provider Endpoints ───
-declare -A AI_ENDPOINTS=(
+declare -g -A AI_ENDPOINTS=(
   ["openai"]="https://api.openai.com/v1/chat/completions"
   ["openrouter"]="https://openrouter.ai/api/v1/chat/completions"
   ["nvidia"]="https://integrate.api.nvidia.com/v1/chat/completions"
@@ -65,7 +65,7 @@ declare -A AI_ENDPOINTS=(
 GEMINI_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/models"
 
 # ─── Provider Default Models ───
-declare -A AI_DEFAULT_MODELS=(
+declare -g -A AI_DEFAULT_MODELS=(
   ["openai"]="gpt-4o-mini"
   ["openrouter"]="meta-llama/llama-3.1-8b-instruct"
   ["nvidia"]="meta/llama-3.1-70b-instruct"
@@ -74,7 +74,7 @@ declare -A AI_DEFAULT_MODELS=(
 )
 
 # ─── Provider API Key Env Vars ───
-declare -A AI_API_KEY_VARS=(
+declare -g -A AI_API_KEY_VARS=(
   ["openai"]="OPENAI_API_KEY"
   ["openrouter"]="OPENROUTER_API_KEY"
   ["nvidia"]="NVIDIA_API_KEY"

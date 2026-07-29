@@ -48,8 +48,8 @@ SHOW_PROFILE=false
 PROFILE_SNAPSHOT=false
 
 # ─── Runtime Data ───
-declare -A PROCESS_PROFILES         # binary_path → sha256_hash (from profile file)
-declare -A PROCESS_BEHAVIOR         # pid → "metric|value|flag|detail"
+declare -g -A PROCESS_PROFILES         # binary_path → sha256_hash (from profile file)
+declare -g -A PROCESS_BEHAVIOR         # pid → "metric|value|flag|detail"
 PROCESS_BEHAVIOR_REPORT=""
 PROCESS_BEHAVIOR_COUNT=0
 PROCESS_BEHAVIOR_ALERTS=0

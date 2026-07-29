@@ -15,7 +15,7 @@
 # Format: technique_id:technique_name:tactic
 # Key format: "port:process" or "port:process:bind" or special conditions
 
-declare -A MITRE_ATTACK_MAP=(
+declare -g -A MITRE_ATTACK_MAP=(
   # === Discovery (TA0007) ===
   ["22:ssh"]="T1046:Network Service Discovery:Discovery"
   ["22:sshd"]="T1046:Network Service Discovery:Discovery"

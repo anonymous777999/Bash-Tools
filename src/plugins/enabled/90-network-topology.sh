@@ -34,8 +34,8 @@ TOPOLOGY_MAX_HOSTS="${TOPOLOGY_MAX_HOSTS:-50}"       # Max hosts to display
 SHOW_TOPOLOGY=false
 
 # ─── Runtime Data ───
-declare -A TOPOLOGY_HOSTS        # ip → "hostname|mac|vendor|reachable"
-declare -A TOPOLOGY_SERVICES     # ip → "service1,service2,..."
+declare -g -A TOPOLOGY_HOSTS        # ip → "hostname|mac|vendor|reachable"
+declare -g -A TOPOLOGY_SERVICES     # ip → "service1,service2,..."
 TOPOLOGY_DISCOVERY_METHOD=""
 
 
