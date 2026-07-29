@@ -16,8 +16,18 @@
 #    sudo port-watcher --dashboard-port 8080    → Custom port
 #
 #  Endpoints:
-#    GET /           → HTML dashboard (JS-powered live updates)
-#    GET /api/scan   → JSON scan data
+#    GET /             → HTML dashboard (JS-powered, SSE real-time)
+#    GET /api/scan     → JSON scan data (for polling fallback)
+#    GET /api/events   → SSE event stream (push updates in real-time)
+#
+#  v2 Features:
+#    • Server-Sent Events (SSE) — push updates instead of polling fetch
+#      (Note: SSE used instead of WebSocket because the bash-backed server
+#       cannot handle WebSocket binary framing. SSE is simpler, works with
+#       socat, and provides the same real-time push capability.)
+#    • Sortable columns — click any header to sort asc/desc
+#    • Live search/filter — filter ports by text in real-time
+#    • Polling fallback — auto-falls back to fetch polling if SSE fails
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Config ───
@@ -97,6 +107,21 @@ case "$path" in
       echo '{"error":"No data available"}'
     fi
     ;;
+  /api/events)
+    echo "HTTP/1.1 200 OK"
+    echo "Content-Type: text/event-stream"
+    echo "Cache-Control: no-cache, no-store"
+    echo "Connection: keep-alive"
+    echo "Access-Control-Allow-Origin: *"
+    echo ""
+    # SSE push: send updated JSON every 3 seconds
+    while true; do
+      if [ -f "$JSON_FILE" ]; then
+        printf "data: %s\n\n" "$(tr -d '\n' < "$JSON_FILE" 2>/dev/null)"
+      fi
+      sleep 3
+    done
+    ;;
   /|/index.html|"")
     echo "HTTP/1.1 200 OK"
     echo "Content-Type: text/html; charset=UTF-8"
@@ -114,7 +139,7 @@ case "$path" in
     echo "Content-Type: text/plain"
     echo "Connection: close"
     echo ""
-    echo "404 - Available: /  /api/scan"
+    echo "404 - Available: /  /api/scan  /api/events"
     ;;
 esac
 SRVEOF
@@ -234,9 +259,19 @@ tr:hover td{background:rgba(34,211,238,.04)}
 .td{color:#94a3b8}
 .tsc{float:right;color:#EF4444;font-weight:700}
 .tm{padding:8px 14px;text-align:center;color:#64748b;font-size:.7rem}
+.sb{display:flex;gap:12px;padding:8px 24px;align-items:center;background:#0d0d16;border-bottom:1px solid #1e293b}
+.sb input{flex:1;background:#111118;border:1px solid #1e293b;border-radius:6px;padding:8px 12px;color:#e2e8f0;font-family:inherit;font-size:.8rem;outline:none;transition:border-color .2s}
+.sb input:focus{border-color:#22d3ee;box-shadow:0 0 0 2px rgba(34,211,238,.1)}
+.sb input::placeholder{color:#475569}
+.sb .rc{color:#64748b;font-size:.75rem;white-space:nowrap}
+th{cursor:pointer;user-select:none;transition:background .15s}
+th:hover{background:rgba(34,211,238,.08)}
+th .si{color:#22d3ee;font-size:.6rem;margin-left:3px;display:inline-block;width:10px;text-align:center}
 .ft{padding:12px 24px;color:#334155;font-size:.7rem;text-align:center;border-top:1px solid #1e293b}
 .ft a{color:#22d3ee;text-decoration:none}
 .ft a:hover{text-decoration:underline}
+.ft .sse-badge{display:inline-block;background:rgba(34,197,94,.12);color:#22c55e;padding:1px 8px;border-radius:10px;font-size:.65rem;font-weight:600;margin-left:8px}
+.ft .poll-badge{display:inline-block;background:rgba(234,179,8,.12);color:#eab308;padding:1px 8px;border-radius:10px;font-size:.65rem;font-weight:600;margin-left:8px}
 @media(max-width:768px){.st{gap:8px}.st>div{min-width:calc(50% - 4px)}.cx{flex-direction:column}.ts{width:100%}.hdr{flex-direction:column;text-align:center}}
 </style>
 </head>
@@ -254,18 +289,30 @@ tr:hover td{background:rgba(34,211,238,.04)}
 <div class="stt"><div class="v" id="stt">${total}</div><div class="l">TOTAL</div></div>
 </div>
 
+<div class="sb">
+<input type="text" id="search" placeholder="🔍 Filter ports by port, process, user, or risk..." oninput="filterChange(this.value)" spellcheck="false">
+<span class="rc" id="rc">${total}/${total}</span>
+</div>
+
 <div class="cx">
 <div class="tw">
-<table><thead><tr><th>Port</th><th>PID</th><th>User</th><th>Process</th><th>Bind</th><th>Risk</th><th>ATT&CK</th><th>Anom</th></tr></thead>
+<table><thead><tr><th data-sort="port">Port<span class="si"></span></th><th data-sort="pid">PID<span class="si"></span></th><th data-sort="user">User<span class="si"></span></th><th data-sort="process">Process<span class="si"></span></th><th data-sort="bind_address">Bind<span class="si"></span></th><th data-sort="risk">Risk<span class="si"></span></th><th data-sort="mitre_attack_id">ATT&amp;CK<span class="si"></span></th><th data-sort="anomaly_score">Anom<span class="si"></span></th></tr></thead>
 <tbody id="pb">${rows}</tbody></table>
 </div>
 ${anomaly_section}
 </div>
 
-<div class="ft">Port Watcher v${VERSION} - <a href="/api/scan">JSON API</a> | Built by RedVortex</div>
+<div class="ft">Port Watcher v${VERSION} - <a href="/api/scan">JSON API</a> | <a href="/api/events">SSE Stream</a> | Built by RedVortex<span class="sse-badge" id="con-badge">SSE</span></div>
 
 <script>
-(function p(){fetch('/api/scan').then(r=>r.json()).then(d=>{if(!d||!d.ports)return;const s=d.stats||{};Object.keys(s).forEach(k=>{const id={cr:'sc',hi:'sh',me:'sm',lo:'sl',to:'stt'}[k[0]+k[1]]||k[0]+k[1];const e=document.getElementById(id);if(e)e.textContent=s[k]});document.getElementById('pc').textContent=s.total||'0';document.getElementById('st').textContent=d.timestamp||'?';const tb=document.getElementById('pb');if(!tb)return;tb.innerHTML='';d.ports.forEach(p=>{const r=p.risk;const rc=r==='CRITICAL'?'#EF4444':r==='HIGH'?'#F59E0B':r==='MEDIUM'?'#EAB308':r==='LOW'?'#10B981':'#64748B';const mb=p.mitre_attack_id?'<span class="bm">'+p.mitre_attack_id+'</span>':'';let ab='';if(p.anomaly_score){const ac=p.anomaly_score>=50?'aa':p.anomaly_score>=30?'aw':'ai';ab='<span class="'+ac+'">'+p.anomaly_score+'</span>'}const tr=document.createElement('tr');tr.innerHTML='<td class="cp">'+p.port+'</td><td>'+(p.pid||'')+'</td><td class="cu">'+p.user+'</td><td>'+p.process+'</td><td>'+p.bind_address+'</td><td style="color:'+rc+';font-weight:600">'+r+'</td><td>'+mb+'</td><td>'+ab+'</td>';tb.appendChild(tr)})}).catch(()=>{}).finally(()=>setTimeout(p,5000))})();
+var ports=[],sortCol='port',sortDir='asc',filterText='';
+function updateData(d){if(!d||!d.ports)return;ports=d.ports;var s=d.stats||{};Object.keys(s).forEach(function(k){var id={cr:'sc',hi:'sh',me:'sm',lo:'sl',to:'stt'}[k[0]+k[1]]||k[0]+k[1];var e=document.getElementById(id);if(e)e.textContent=s[k]});document.getElementById('pc').textContent=s.total||'0';document.getElementById('st').textContent=d.timestamp||'?';renderTable()}
+function renderTable(){var filtered=ports;if(filterText){var t=filterText.toLowerCase();filtered=ports.filter(function(p){return String(p.port).indexOf(t)!==-1||(p.process||'').toLowerCase().indexOf(t)!==-1||(p.user||'').toLowerCase().indexOf(t)!==-1||(p.risk||'').toLowerCase().indexOf(t)!==-1||(p.bind_address||'').toLowerCase().indexOf(t)!==-1})}document.getElementById('rc').textContent=filtered.length+'/'+ports.length;if(sortCol){filtered.sort(function(a,b){var va=a[sortCol],vb=b[sortCol];if(typeof va==='string')va=va.toLowerCase();if(typeof vb==='string')vb=vb.toLowerCase();if(va<vb)return sortDir==='asc'?-1:1;if(va>vb)return sortDir==='asc'?1:-1;return 0})}document.querySelectorAll('[data-sort]').forEach(function(th){var col=th.getAttribute('data-sort');var si=th.querySelector('.si');if(si)si.textContent=col===sortCol?(sortDir==='asc'?'\u25b2':'\u25bc'):''});var tb=document.getElementById('pb');if(!tb)return;if(filtered.length===0){tb.innerHTML='<tr><td colspan="8" style="text-align:center;color:#64748b;padding:24px">\u26a0\ufe0f No ports match filter &mdash; try a different search</td></tr>';return}tb.innerHTML='';filtered.forEach(function(p){var rc=p.risk==='CRITICAL'?'#EF4444':p.risk==='HIGH'?'#F59E0B':p.risk==='MEDIUM'?'#EAB308':p.risk==='LOW'?'#10B981':'#64748b';var mb=p.mitre_attack_id?'<span class="bm">'+p.mitre_attack_id+'</span>':'';var ab='';if(p.anomaly_score){var ac=p.anomaly_score>=50?'aa':p.anomaly_score>=30?'aw':'ai';ab='<span class="'+ac+'">'+p.anomaly_score+'</span>'}var tr=document.createElement('tr');tr.innerHTML='<td class="cp">'+p.port+'</td><td>'+(p.pid||'')+'</td><td class="cu">'+p.user+'</td><td>'+p.process+'</td><td>'+p.bind_address+'</td><td style="color:'+rc+';font-weight:600">'+p.risk+'</td><td>'+mb+'</td><td>'+ab+'</td>';tb.appendChild(tr)})}
+function sortBy(col){if(sortCol===col){sortDir=sortDir==='asc'?'desc':'asc'}else{sortCol=col;sortDir='asc'}renderTable()}
+function filterChange(v){filterText=v;renderTable()}
+function pollFetch(){fetch('/api/scan').then(function(r){return r.json()}).then(function(d){updateData(d)}).catch(function(){})}
+document.querySelectorAll('[data-sort]').forEach(function(th){th.style.cursor='pointer';th.addEventListener('click',function(){sortBy(th.getAttribute('data-sort'))})});
+(function connect(){var es;try{es=new EventSource('/api/events');es.onmessage=function(e){try{updateData(JSON.parse(e.data))}catch(ex){}};es.onerror=function(){es.close();var b=document.getElementById('con-badge');if(b){b.className='poll-badge';b.textContent='POLL'}(function poll(){pollFetch();setTimeout(poll,5000)})()};es.onopen=function(){var b=document.getElementById('con-badge');if(b){b.className='sse-badge';b.textContent='SSE'}}}catch(ex){(function poll(){pollFetch();setTimeout(poll,5000)})()}})();pollFetch();
 </script>
 </body>
 </html>
