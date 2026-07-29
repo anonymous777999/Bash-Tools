@@ -12,6 +12,9 @@
 #    • groq       — Llama 3, Mixtral, Gemma         (free tier, TPM-limited)
 #    • gemini     — Gemini 2.0 Flash / Pro          (different API format)
 #
+#  Automatic fallback chain: groq → openrouter → nvidia → gemini → openai
+#  If one provider fails, the next available one is tried automatically.
+#
 #  Config in ports.conf:
 #    AI_ANALYSIS_ENABLED=true
 #    AI_PROVIDER=openrouter
@@ -84,6 +87,11 @@ AI_ANALYSIS_RESULT=""
 AI_ANALYSIS_TIMESTAMP=0
 AI_LAST_HASH=""
 AI_CACHE_FILE="/tmp/port-watcher-ai-cache.txt"
+_PROVIDER_RESPONSE=""
+_PROVIDER_ERROR=""
+
+# ─── Fallback Chain (priority order: cheapest/most generous free tier first) ───
+AI_FALLBACK_CHAIN=("groq" "openrouter" "nvidia" "gemini" "openai")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -127,19 +135,15 @@ _is_provider_available() {
   [[ -n "$key" ]]
 }
 
-# Get available providers (those with API keys configured)
-_get_available_providers() {
-  local available=()
-  for provider in openai openrouter nvidia groq gemini; do
-    if _is_provider_available "$provider"; then
-      available+=("$provider")
+# Build the fallback chain — providers that have API keys, in priority order
+_build_fallback_chain() {
+  local chain=()
+  for p in "${AI_FALLBACK_CHAIN[@]}"; do
+    if _is_provider_available "$p"; then
+      chain+=("$p")
     fi
   done
-  # Fallback to configured provider even if no key (will error gracefully)
-  if [[ ${#available[@]} -eq 0 ]] && [[ -n "$AI_PROVIDER" ]]; then
-    available+=("$AI_PROVIDER")
-  fi
-  echo "${available[@]}"
+  echo "${chain[@]}"
 }
 
 
@@ -501,12 +505,48 @@ except:
   echo "$content"
 }
 
+# ─── Provider Call with Fallback ───
+
+# Call a single provider and return response via _PROVIDER_RESPONSE / _PROVIDER_ERROR
+_call_provider() {
+  local provider="$1" model="$2" system_prompt="$3" user_prompt="$4"
+  _PROVIDER_RESPONSE=""
+  _PROVIDER_ERROR=""
+
+  local endpoint="$(_get_endpoint "$provider")"
+  [[ -z "$endpoint" ]] && { _PROVIDER_ERROR="Unknown endpoint for $provider"; return 1; }
+
+  local response_json=""
+  if [[ "$provider" == "gemini" ]]; then
+    response_json="$(_call_gemini "$endpoint" "$model" "$system_prompt" "$user_prompt")"
+  else
+    local api_key
+    api_key="$(_get_api_key "$provider")"
+    [[ -z "$api_key" ]] && { _PROVIDER_ERROR="No API key for $provider"; return 1; }
+    response_json="$(_call_openai_compatible "$endpoint" "$api_key" "$model" "$system_prompt" "$user_prompt")"
+  fi
+
+  local response_text
+  response_text="$(_extract_response "$provider" "$response_json" 2>/dev/null || true)"
+  local extract_exit=$?
+
+  if [[ $extract_exit -ne 0 || -z "$response_text" || "$response_text" == "Parse error" ]]; then
+    _PROVIDER_ERROR="$response_text"
+    _PROVIDER_RESPONSE="$response_json"
+    return 1
+  fi
+
+  _PROVIDER_RESPONSE="$response_text"
+  return 0
+}
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  MAIN ANALYSIS FUNCTION
+#  MAIN ANALYSIS FUNCTION (with automatic fallback chain)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Run AI analysis on port scan data
+# Run AI analysis on port scan data with automatic provider fallback
+# Falls back through: groq → openrouter → nvidia → gemini → openai
 run_ai_analysis() {
   local port_data="$1"
   local mode="${2:-$AI_ANALYSIS_MODE}"
@@ -533,55 +573,12 @@ run_ai_analysis() {
   local data_hash
   data_hash="$(_compute_data_hash "$port_data")"
   if _check_cache "$data_hash"; then
-    # Cache hit — still print a brief note
     local age=$(( $(date +%s) - AI_ANALYSIS_TIMESTAMP ))
     echo ""
     cecho "$C_DIM" "  [AI Analysis] Using cached result (${age}s old)"
     echo ""
     echo "$AI_ANALYSIS_RESULT"
     return 0
-  fi
-
-  # Check available providers
-  local provider="$AI_PROVIDER"
-  if ! _is_provider_available "$provider"; then
-    # Try fallback to any available provider
-    local fallback_provider=""
-    for p in openrouter groq nvidia openai gemini; do
-      if _is_provider_available "$p"; then
-        fallback_provider="$p"
-        break
-      fi
-    done
-    if [[ -n "$fallback_provider" ]]; then
-      provider="$fallback_provider"
-      cecho "$C_DIM" "  [AI] Falling back to provider: $provider"
-    else
-      echo ""
-      cecho "$C_BOLD_YELLOW" "  ╔═══════════════════════════════════════════════════════════════╗"
-      cecho "$C_BOLD_YELLOW" "  ║  🤖 AI Analysis: No API Keys Configured                       ║"
-      cecho "$C_BOLD_YELLOW" "  ╚═══════════════════════════════════════════════════════════════╝"
-      echo ""
-      echo "  To enable AI-powered analysis, set at least one API key in ports.conf:"
-      echo ""
-      echo "    # Recommended (free tier):"
-      echo "    GROQ_API_KEY=gsk_your_key_here"
-      echo "    AI_PROVIDER=groq"
-      echo ""
-      echo "    # Or with OpenRouter (free + paid models):"
-      echo "    OPENROUTER_API_KEY=sk-or-your-key-here"
-      echo "    AI_PROVIDER=openrouter"
-      echo ""
-      echo "    # Or with NVIDIA NIM (free rate-limited):"
-      echo "    NVIDIA_API_KEY=nvapi-your-key-here"
-      echo "    AI_PROVIDER=nvidia"
-      echo ""
-      echo "    # Or with Google Gemini (free tier available):"
-      echo "    GEMINI_API_KEY=AIza_your_key_here"
-      echo "    AI_PROVIDER=gemini"
-      echo ""
-      return 0
-    fi
   fi
 
   # Check if there's data to analyze
@@ -591,22 +588,42 @@ run_ai_analysis() {
     return 0
   fi
 
-  # Show status
-  local model="$(_get_model "$provider")"
-  echo ""
-  cecho "$C_BOLD_CYAN" "  ╔═══════════════════════════════════════════════════════════════╗"
-  cecho "$C_BOLD_CYAN" "  ║  🤖 AI Security Analysis                                    ║"
-  cecho "$C_BOLD_CYAN" "  ╚═══════════════════════════════════════════════════════════════╝"
-  cecho "$C_DIM" "     Provider: $provider"
-  cecho "$C_DIM" "     Model:     $model"
-  cecho "$C_DIM" "     Mode:      $mode"
-  echo ""
+  # Build the fallback chain — only providers with API keys, in priority order
+  local chain
+  chain=($(_build_fallback_chain))
+
+  if [[ ${#chain[@]} -eq 0 ]]; then
+    echo ""
+    cecho "$C_BOLD_YELLOW" "  ╔═══════════════════════════════════════════════════════════════╗"
+    cecho "$C_BOLD_YELLOW" "  ║  🤖 AI Analysis: No API Keys Configured                       ║"
+    cecho "$C_BOLD_YELLOW" "  ╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "  To enable AI-powered analysis, set at least one API key in ports.conf:"
+    echo ""
+    echo "    # Recommended (free tier):"
+    echo "    GROQ_API_KEY=gsk_your_key_here"
+    echo "    AI_PROVIDER=groq"
+    echo ""
+    echo "    # Or with OpenRouter:"
+    echo "    OPENROUTER_API_KEY=sk-or-your-key-here"
+    echo "    AI_PROVIDER=openrouter"
+    echo ""
+    echo "    # Or with NVIDIA NIM (free):"
+    echo "    NVIDIA_API_KEY=nvapi-your-key-here"
+    echo "    AI_PROVIDER=nvidia"
+    echo ""
+    echo "    # Or with Google Gemini (free):"
+    echo "    GEMINI_API_KEY=AIza_your_key_here"
+    echo "    AI_PROVIDER=gemini"
+    echo ""
+    return 0
+  fi
 
   # Save and disable color to prevent ANSI codes bleeding into the AI prompt
   local saved_color="$COLOR"
   COLOR=false
 
-  # Build system and user prompts
+  # Build system and user prompts ONCE (reused across all fallback attempts)
   local system_prompt user_prompt
   system_prompt="$(_build_system_prompt "$mode")"
   user_prompt="$(_build_user_prompt "$port_data")"
@@ -614,47 +631,97 @@ run_ai_analysis() {
   # Restore color
   COLOR="$saved_color"
 
-  # Make the API call
-  local response_json response_text
-  local endpoint="$(_get_endpoint "$provider")"
-
-  if [[ -z "$endpoint" ]]; then
-    cecho "$C_BOLD_RED" "  Unknown provider: $provider"
-    return 1
-  fi
-
-  if [[ "$provider" == "gemini" ]]; then
-    response_json="$(_call_gemini "$endpoint" "$model" "$system_prompt" "$user_prompt")"
-  else
-    local api_key
-    api_key="$(_get_api_key "$provider")"
-    if [[ -z "$api_key" ]]; then
-      cecho "$C_BOLD_RED" "  No API key configured for provider: $provider"
-      return 1
+  # Determine which provider to try FIRST
+  # If configured provider has a key AND is in the chain, start there
+  # Otherwise start from the first available in the chain
+  local start_idx=0
+  local configured_in_chain=false
+  for i in "${!chain[@]}"; do
+    if [[ "${chain[$i]}" == "$AI_PROVIDER" ]]; then
+      start_idx=$i
+      configured_in_chain=true
+      break
     fi
-    response_json="$(_call_openai_compatible "$endpoint" "$api_key" "$model" "$system_prompt" "$user_prompt")"
+  done
+
+  # Show header
+  local mode_display="${mode^^}"
+  [[ "$mode" == "auto-fix" ]] && mode_display="AUTO-FIX"
+  echo ""
+  cecho "$C_BOLD_CYAN" "  ╔═══════════════════════════════════════════════════════════════╗"
+  cecho "$C_BOLD_CYAN" "  ║  🤖 AI Security Analysis  [${mode_display}]                              ║"
+  cecho "$C_BOLD_CYAN" "  ╚═══════════════════════════════════════════════════════════════╝"
+  if ! $configured_in_chain && [[ ${#chain[@]} -gt 1 ]]; then
+    cecho "$C_DIM" "     Note: Configured provider '$AI_PROVIDER' has no key, using first available"
   fi
+  cecho "$C_DIM" "     Available providers in fallback chain: ${chain[*]}"
+  echo ""
 
-  # Extract response text
-  response_text="$(_extract_response "$provider" "$response_json")"
+  # Try providers in order until one succeeds
+  # Start from start_idx, wrap around through the rest
+  local succeeded=false
+  local tried=()
+  local total=${#chain[@]}
+  local attempts=0
 
-  if [[ $? -ne 0 || -z "$response_text" || "$response_text" == "Parse error" ]]; then
-    cecho "$C_BOLD_RED" "  ⚠️  API call failed. Raw response:"
+  # Try ALL providers in order, wrapping around if needed
+  local i
+  for ((i = 0; i < total; i++)); do
+    local idx=$(( (start_idx + i) % total ))
+    local provider="${chain[$idx]}"
+    attempts=$((attempts + 1))
+
+    # Deduplicate tries (safety check)
+    local already_tried=false
+    for t in "${tried[@]}"; do
+      [[ "$t" == "$provider" ]] && { already_tried=true; break; }
+    done
+    $already_tried && continue
+    tried+=("$provider")
+
+    local model="$(_get_model "$provider")"
+    cecho "$C_DIM" "  [AI] Trying provider ${attempts}/${total}: $provider ($model)..."
+
+    _call_provider "$provider" "$model" "$system_prompt" "$user_prompt"
+    if [[ $? -eq 0 ]]; then
+      succeeded=true
+      echo ""
+      if [[ $attempts -gt 1 ]]; then
+        cecho "$C_GREEN" "  ✓ Succeeded with fallback provider: $provider"
+        echo ""
+      fi
+      # Save to cache
+      _save_cache "$data_hash" "$_PROVIDER_RESPONSE"
+      # Print the result
+      echo "$_PROVIDER_RESPONSE"
+      echo ""
+      break
+    else
+      local err_msg="${_PROVIDER_ERROR:0:80}"
+      cecho "$C_BOLD_YELLOW" "  ⚠️  $provider failed: ${err_msg}"
+      if [[ $attempts -lt $total ]]; then
+        cecho "$C_DIM" "     → Trying next provider..."
+        echo ""
+      fi
+    fi
+  done
+
+  if ! $succeeded; then
     echo ""
-    echo "$response_json" | head -c 500
+    cecho "$C_BOLD_RED" "  ╔═══════════════════════════════════════════════════════════════╗"
+    cecho "$C_BOLD_RED" "  ║  ✗ All providers failed — no analysis could be completed       ║"
+    cecho "$C_BOLD_RED" "  ╚═══════════════════════════════════════════════════════════════╝"
     echo ""
-    # Save partial response for debugging
-    echo "$response_json" > /tmp/port-watcher-ai-error.json
-    cecho "$C_DIM" "  Full response saved to: /tmp/port-watcher-ai-error.json"
+    cecho "$C_DIM" "  Tried providers: ${tried[*]}"
+    echo ""
+    cecho "$C_DIM" "  Last error saved to: /tmp/port-watcher-ai-error.json"
+    if [[ -n "$_PROVIDER_RESPONSE" ]]; then
+      echo "$_PROVIDER_RESPONSE" > /tmp/port-watcher-ai-error.json 2>/dev/null || true
+    fi
     return 1
   fi
 
-  # Save to cache
-  _save_cache "$data_hash" "$response_text"
-
-  # Print the result
-  echo "$response_text"
-  echo ""
+  return 0
 }
 
 
@@ -668,10 +735,6 @@ show_ai_analysis_report() {
   run_ai_analysis "$port_data" "$AI_ANALYSIS_MODE"
 }
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  PLUGIN INTERFACE
-# ═══════════════════════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  AUTO-FIX EXECUTION ENGINE
@@ -707,13 +770,11 @@ _execute_one_fix() {
   # Check if we should try IPS plugin first for block actions
   local executed=false
   if [[ "$action" == "block" ]] && declare -f block_port &>/dev/null; then
-    # Use the existing IPS plugin's block function (has whitelist, iptables/ip6tables/nftables)
     block_port "$port" "$service" "$reason" 2>/dev/null && executed=true
   fi
 
   # Execute the command directly if IPS didn't handle it
   if ! $executed; then
-    # Apply the action
     case "$tool" in
       iptables)
         if command -v iptables &>/dev/null; then
@@ -741,16 +802,14 @@ _execute_one_fix() {
         fi
         ;;
       ss)
-        # ss is for socket-level changes (bind address, etc.)
         eval "$command" 2>/dev/null && executed=true || cecho "$C_BOLD_RED" "    ✗ command failed"
         ;;
       sed|*)
-        # Config file changes via sed or other tools
         if echo "$command" | grep -q "sudo"; then
           eval "$command" 2>/dev/null && executed=true || cecho "$C_BOLD_RED" "    ✗ command failed"
         else
           eval "$command" 2>/dev/null || cecho "$C_BOLD_RED" "    ✗ command failed"
-          executed=true  # Assume success for informational commands
+          executed=true
         fi
         ;;
     esac
@@ -759,9 +818,7 @@ _execute_one_fix() {
   # Record the result
   if $executed; then
     AI_FIX_ACTIONS_TAKEN=$((AI_FIX_ACTIONS_TAKEN + 1))
-    # Save undo info
     echo "#$port|$service|$undo" >> "$AI_FIX_UNDO_FILE"
-    # Log success
     {
       echo "Status: EXECUTED"
       echo "Result: SUCCESS"
@@ -785,37 +842,25 @@ _execute_one_fix() {
 
 # ─── Fix Parser ───
 
-# Parse AI response JSON and extract fix actions into an array
-# Returns lines: port|service|risk|action|tool|command|reason|undo|safety
+# Parse AI response JSON and extract fix actions into pipe-delimited lines
 _parse_fixes() {
   local response="$1"
-
-  # Try to extract JSON from response (handle cases where AI wraps in markdown)
   local json_text="$response"
 
-  # Strip markdown code fences if present
-  if echo "$json_text" | grep -q '"fixes"'; then
-    # Already has JSON structure
-    :
-  elif echo "$json_text" | grep -q '"fixes"'; then
-    :
-  fi
-
-  # Use python3 to parse the JSON and extract fix actions
   # Using heredoc to avoid bash escaping issues with regex backslashes
   python3 << 'PYEOF' 2>/dev/null || echo "PARSE_ERROR: python3 failed"
 import json, sys, re
 
 text = sys.stdin.read()
 
-# Try to extract JSON from response (handles bare JSON or markdown-wrapped)    # Match { "assessment": ... "fixes": [...] } (allow whitespace after opening brace)
-    json_match = re.search(r'\{\s*"assessment".*?"fixes"\s*:\s*\[.*?\]\s*\}', text, re.DOTALL)
-    if not json_match:
-        # Try relaxed match for mini JSON (assessment might be missing)
-        json_match = re.search(r'\{[^{}]*"fixes"\s*:\s*\[[^\]]*\][^{}]*\}', text, re.DOTALL)
+# Match { "assessment": ... "fixes": [...] } with whitespace allowance after opening brace
+json_match = re.search(r'\{\s*"assessment".*?"fixes"\s*:\s*\[.*?\]\s*\}', text, re.DOTALL)
+if not json_match:
+    # Relaxed match: JSON without assessment field
+    json_match = re.search(r'\{[^{}]*"fixes"\s*:\s*\[[^\]]*\][^{}]*\}', text, re.DOTALL)
 
-    if json_match:
-        text = json_match.group(0)
+if json_match:
+    text = json_match.group(0)
 
 try:
     data = json.loads(text)
@@ -877,7 +922,6 @@ _prompt_for_fix() {
   echo "    Undo:    $undo"
   echo ""
 
-  # Check safety level — warn for risky
   if [[ "$safety" == "risky" ]]; then
     cecho "$C_BOLD_RED" "  ⚠️  This action is marked as RISKY — could break functionality!"
     echo ""
@@ -954,7 +998,6 @@ run_ai_auto_fix() {
   local port_data="$1"
   local min_risk="${2:-$AI_FIX_LEVEL}"
 
-  # Check prerequisites
   if [[ "$AI_ANALYSIS_ENABLED" != "true" ]]; then
     cecho "$C_BOLD_YELLOW" "  AI analysis disabled in config"
     return 1
@@ -965,47 +1008,37 @@ run_ai_auto_fix() {
     return 1
   fi
 
-  # Ensure log directory exists
   mkdir -p "$AI_FIX_LOG_DIR" 2>/dev/null || true
 
-  # Run AI analysis in auto-fix mode (bypasses cache for safety)
   local saved_cache_ttl="$AI_CACHE_TTL"
-  AI_CACHE_TTL=0  # Disable cache for auto-fix
+  AI_CACHE_TTL=0
 
-  # Run analysis
   local analysis_result
   analysis_result="$(run_ai_analysis "$port_data" "auto-fix" 2>/dev/null || true)"
 
-  # Restore cache TTL
   AI_CACHE_TTL="$saved_cache_ttl"
 
-  # Check if we got useful output
   if [[ -z "$analysis_result" ]]; then
     cecho "$C_BOLD_YELLOW" "  No analysis result from AI."
     return 1
   fi
 
-  # Check for API errors
   if echo "$analysis_result" | grep -q "⚠️  API Error\|No API Keys\|Parse error"; then
     echo "$analysis_result"
     return 1
   fi
 
-  # Parse fix actions from the response
   local fixes_txt
   fixes_txt="$(_parse_fixes "$analysis_result")"
 
-  # Check for no-fixes response
   if echo "$fixes_txt" | grep -q "NO_FIXES"; then
     echo ""
     cecho "$C_GREEN" "  ✓ AI analysis complete — no fixes needed."
     echo ""
-    # Still show the analysis result
     echo "$analysis_result"
     return 0
   fi
 
-  # Check for parse errors
   if echo "$fixes_txt" | grep -q "PARSE_ERROR"; then
     cecho "$C_BOLD_RED" "  ⚠️  Failed to parse AI response as JSON."
     cecho "$C_DIM" "     The AI returned an unexpected format. Raw output:"
@@ -1017,7 +1050,6 @@ run_ai_auto_fix() {
     return 1
   fi
 
-  # Count fixes
   local total_fixes
   total_fixes="$(echo "$fixes_txt" | wc -l)"
 
@@ -1026,17 +1058,12 @@ run_ai_auto_fix() {
   cecho "$C_BOLD_CYAN" "  ║  🛠️  AI Auto-Fix: ${total_fixes} Suggested Action(s)                         ║"
   cecho "$C_BOLD_CYAN" "  ╚═══════════════════════════════════════════════════════════════╝"
   echo ""
-
-  # Also show the assessment
   cecho "$C_DIM" "  Assessment: $(echo "$analysis_result" | head -1)"
   echo ""
 
-  # Process fixes with confirmation
   local index=0
-  local batch_mode=false
-  local all_approved=true
+  AI_FIX_BATCH_MODE=false
 
-  # Read fixes into a temp file for processing
   local fixes_file="/tmp/port-watcher-fixes.txt"
   echo "$fixes_txt" > "$fixes_file"
 
@@ -1044,45 +1071,36 @@ run_ai_auto_fix() {
     [[ -z "$port" || "$port" == "#"* ]] && continue
     index=$((index + 1))
 
-    # Restore pipe characters
-    command="$(echo "$command" | sed 's|/PIPE/|\|\||g')"
-    reason="$(echo "$reason" | sed 's|/PIPE/|\|\||g')"
-    undo="$(echo "$undo" | sed 's|/PIPE/|\|\||g')"
+    # Restore pipe characters: /PIPE/ -> || (use ! delimiter to avoid pipe ambiguity)
+    command="$(echo "$command" | sed 's!/PIPE/!||!g')"
+    reason="$(echo "$reason" | sed 's!/PIPE/!||!g')"
+    undo="$(echo "$undo" | sed 's!/PIPE/!||!g')"
 
-    # Check risk level filter
     local skip=false
     case "$min_risk" in
       CRITICAL) [[ "$risk" != "CRITICAL" ]] && skip=true ;;
       HIGH)     [[ "$risk" != "CRITICAL" && "$risk" != "HIGH" ]] && skip=true ;;
-      ALL|*)    ;;  # Include all
+      ALL|*)    ;;
     esac
     $skip && continue
 
-    if ! $AI_FIX_BATCH_MODE; then
-      # Prompt for confirmation
-      if [[ "$AI_FIX_CONFIRM" == "yes" ]]; then
-        # Auto-approve
-        _execute_one_fix "$port" "$service" "$action" "$tool" "$command" "$undo" "$reason" "$safety"
-      elif [[ "$AI_FIX_CONFIRM" == "dry-run" ]]; then
-        # Just show, don't execute
-        echo "  [DRY-RUN] Would apply: $ ${command}"
-      else
-        # Show prompt and ask — prompt function handles ALL mode via AI_FIX_BATCH_MODE global
-        _prompt_for_fix "$index" "$total_fixes" "$port" "$service" "$risk" "$action" "$tool" "$command" "$reason" "$safety" "$undo"
-        local prompt_exit=$?
-        if [[ $prompt_exit -eq 0 ]]; then
-          _execute_one_fix "$port" "$service" "$action" "$tool" "$command" "$undo" "$reason" "$safety"
-        else
-          cecho "$C_DIM" "    — Skipped"
-        fi
-      fi
-    else
-      # Batch mode: execute all remaining without prompting
+    if $AI_FIX_BATCH_MODE; then
       _execute_one_fix "$port" "$service" "$action" "$tool" "$command" "$undo" "$reason" "$safety"
+    elif [[ "$AI_FIX_CONFIRM" == "yes" ]]; then
+      _execute_one_fix "$port" "$service" "$action" "$tool" "$command" "$undo" "$reason" "$safety"
+    elif [[ "$AI_FIX_CONFIRM" == "dry-run" ]]; then
+      echo "  [DRY-RUN] Would apply: $ ${command}"
+    else
+      _prompt_for_fix "$index" "$total_fixes" "$port" "$service" "$risk" "$action" "$tool" "$command" "$reason" "$safety" "$undo"
+      local prompt_exit=$?
+      if [[ $prompt_exit -eq 0 ]]; then
+        _execute_one_fix "$port" "$service" "$action" "$tool" "$command" "$undo" "$reason" "$safety"
+      else
+        cecho "$C_DIM" "    — Skipped"
+      fi
     fi
   done < "$fixes_file"
 
-  # Summary
   echo ""
   cecho "$C_BOLD" "  ╔═══════════════════════════════════════════════════════════════╗"
   cecho "$C_BOLD" "  ║  📊 Auto-Fix Summary                                         ║"
@@ -1097,9 +1115,7 @@ run_ai_auto_fix() {
   cecho "$C_DIM" "    Undo:    $AI_FIX_UNDO_FILE"
   echo ""
 
-  # Cleanup
   rm -f "$fixes_file"
-
   return 0
 }
 
@@ -1110,23 +1126,17 @@ run_ai_auto_fix() {
 
 # Plugin initialization — load keys from environment if not set in config
 plugin_init_ai-analysis() {
-  # If running in MCP mode or env vars are set, use those instead
   [[ -z "$OPENAI_API_KEY" && -n "${OPENAI_API_KEY_ENV:-}" ]] && OPENAI_API_KEY="$OPENAI_API_KEY_ENV"
   [[ -z "$OPENROUTER_API_KEY" && -n "${OPENROUTER_API_KEY_ENV:-}" ]] && OPENROUTER_API_KEY="$OPENROUTER_API_KEY_ENV"
   [[ -z "$NVIDIA_API_KEY" && -n "${NVIDIA_API_KEY_ENV:-}" ]] && NVIDIA_API_KEY="$NVIDIA_API_KEY_ENV"
   [[ -z "$GROQ_API_KEY" && -n "${GROQ_API_KEY_ENV:-}" ]] && GROQ_API_KEY="$GROQ_API_KEY_ENV"
   [[ -z "$GEMINI_API_KEY" && -n "${GEMINI_API_KEY_ENV:-}" ]] && GEMINI_API_KEY="$GEMINI_API_KEY_ENV"
 
-  # Print available AI providers
   if $AI_ANALYSIS_ENABLED; then
-    local available=()
-    for p in openai openrouter nvidia groq gemini; do
-      if _is_provider_available "$p"; then
-        available+=("$p")
-      fi
-    done
-    if [[ ${#available[@]} -gt 0 ]]; then
-      cecho "$C_DIM" "  [ai-analysis] AI providers ready: ${available[*]}"
+    local available
+    available="$(_build_fallback_chain)"
+    if [[ -n "$available" ]]; then
+      cecho "$C_DIM" "  [ai-analysis] Fallback chain: ${available}"
     else
       cecho "$C_DIM" "  [ai-analysis] No API keys configured. Use --ai-analyze for setup info."
     fi
