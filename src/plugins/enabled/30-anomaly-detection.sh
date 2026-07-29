@@ -40,12 +40,12 @@ ANOMALY_PROFILE_DIR="$HOME/.config/port-watcher"
 ANOMALY_PROFILE_FILE="${ANOMALY_PROFILE_DIR}/anomaly-profile.json"
 
 # Runtime state
-declare -A ANOMALY_CURRENT_PROFILE      # key=port:process → "process|user|bind|risk|count"
-declare -A ANOMALY_DETECTIONS           # key=port → "score|type|detail"
-ANOMALY_TOTAL_SCORE=0
-ANOMALY_COUNT=0
-ANOMALY_USING_SQLITE=false
-ANOMALY_PROFILE_LOADED=false
+declare -g -A ANOMALY_CURRENT_PROFILE      # key=port:process → "process|user|bind|risk|count"
+declare -g -A ANOMALY_DETECTIONS           # key=port → "score|type|detail"
+declare -g ANOMALY_TOTAL_SCORE=0
+declare -g ANOMALY_COUNT=0
+declare -g ANOMALY_USING_SQLITE=false
+declare -g ANOMALY_PROFILE_LOADED=false
 
 # ─── Plugin Init ───
 
