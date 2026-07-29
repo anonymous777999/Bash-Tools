@@ -198,6 +198,30 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "ai_auto_fix",
+        "description": "AI-powered auto-remediation. Analyzes scan results through an LLM and suggests structured fix actions (iptables block, systemctl stop, config changes) with per-fix confirmation. Executes approved fixes and saves undo information. Requires an API key configured in ports.conf.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "level": {
+                    "type": "string",
+                    "enum": ["CRITICAL", "HIGH", "ALL"],
+                    "default": "CRITICAL",
+                    "description": "Minimum risk level to fix: CRITICAL (highest risk only), HIGH (critical+high), or ALL (everything the AI suggests)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["openai", "openrouter", "nvidia", "groq", "gemini"],
+                    "description": "AI provider to use. Falls back to AI_PROVIDER in config if not specified.",
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Model name override (e.g., 'gpt-4o-mini', 'llama-3.3-70b-versatile').",
+                },
+            },
+        },
+    },
 ]
 
 # ─── Resource Definitions ───
@@ -365,6 +389,7 @@ def handle_tools_call(params: dict):
         "attack_surface": _call_attack_surface,
         "run_all": _call_run_all,
         "ai_analyze": _call_ai_analyze,
+        "ai_auto_fix": _call_ai_auto_fix,
     }
 
     handler = handlers.get(name)
@@ -498,6 +523,22 @@ def _call_ai_analyze(args: dict) -> dict:
     model = args.get("model", "")
 
     cmd = ["--ai-analyze", "--ai-mode", mode]
+    if provider:
+        cmd += ["--ai-provider", provider]
+    if model:
+        cmd += ["--ai-model", model]
+
+    stdout = run_port_watcher(cmd, timeout=120)
+    return _text_content(stdout)
+
+
+def _call_ai_auto_fix(args: dict) -> dict:
+    """Execute AI auto-remediation."""
+    level = args.get("level", "CRITICAL")
+    provider = args.get("provider", "")
+    model = args.get("model", "")
+
+    cmd = ["--ai-auto-fix", "--ai-fix-level", level]
     if provider:
         cmd += ["--ai-provider", provider]
     if model:

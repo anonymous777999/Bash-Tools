@@ -133,6 +133,8 @@ CLI_AI_ANALYZE=false
 CLI_AI_PROVIDER=""
 CLI_AI_MODE=""
 CLI_AI_MODEL=""
+CLI_AI_AUTO_FIX=false
+CLI_AI_FIX_LEVEL=""
 
 # ─── SQLITE DATABASE GLOBALS ───
 DB_PATH="$HOME/.config/port-watcher/history.db"
@@ -185,6 +187,8 @@ ${C_BOLD}Options:${C_RESET}
       --ai-provider <name>  AI provider: openai, openrouter, nvidia, groq, gemini
       --ai-mode <mode>      Analysis mode: briefing, remediation, attack, full (default: briefing)
       --ai-model <model>    AI model name (e.g., 'gpt-4o-mini', 'llama-3.3-70b-versatile')
+      --ai-auto-fix         AI auto-remediation — suggests AND executes fixes with confirmation
+      --ai-fix-level <lvl>  Auto-fix risk threshold: CRITICAL, HIGH, ALL (default: CRITICAL)
       --version            Show version information
   -h, --help               Show this help message
 
@@ -217,6 +221,8 @@ ${C_BOLD}Examples:${C_RESET}
   ${SCRIPT_NAME} --ai-analyze --ai-mode attack  # AI attack narrative mode
   ${SCRIPT_NAME} --ai-provider groq             # Use Groq AI provider
   ${SCRIPT_NAME} --ai-analyze --ai-model gpt-4o-mini  # Use specific model
+  ${SCRIPT_NAME} --ai-auto-fix                # AI auto-remediation with prompts
+  ${SCRIPT_NAME} --ai-auto-fix --ai-fix-level ALL  # Auto-fix everything
   ${SCRIPT_NAME} --syslog                     # Log to syslog
 
 ${C_BOLD}Risk Levels:${C_RESET}
@@ -250,6 +256,8 @@ ${C_BOLD}Plugins:${C_RESET}
   --ai-provider <name>     AI provider: openai, openrouter, nvidia, groq, gemini (default: openrouter)
   --ai-mode <mode>         Analysis mode: briefing, remediation, attack, full (default: briefing)
   --ai-model <model>       AI model name override (e.g., 'gpt-4o-mini', 'llama-3.3-70b-versatile')
+  --ai-auto-fix            AI auto-remediation — analyzes, suggests, and executes fixes
+  --ai-fix-level <level>   Auto-fix risk threshold: CRITICAL, HIGH, or ALL (default: CRITICAL)
 
 ${C_BOLD}Configuration:${C_RESET}
   ~/.config/port-watcher/ports.conf           User config
@@ -387,6 +395,16 @@ parse_args() {
       --ai-model)
         shift
         CLI_AI_MODEL="$1"
+        CLI_AI_ANALYZE=true
+        ;;
+      --ai-auto-fix)
+        CLI_AI_AUTO_FIX=true
+        CLI_AI_ANALYZE=true
+        ;;
+      --ai-fix-level)
+        shift
+        CLI_AI_FIX_LEVEL="${1^^}"
+        CLI_AI_AUTO_FIX=true
         CLI_AI_ANALYZE=true
         ;;
       --version)
@@ -1457,7 +1475,13 @@ main() {
     if [[ -n "$CLI_AI_MODEL" ]]; then
       AI_MODEL="$CLI_AI_MODEL"
     fi
-    show_ai_analysis_report "$port_data" 2>/dev/null || true
+    # If auto-fix mode, use the auto-fix entry point instead
+    if $CLI_AI_AUTO_FIX && declare -f run_ai_auto_fix &>/dev/null; then
+      local fix_level="${CLI_AI_FIX_LEVEL:-$AI_FIX_LEVEL}"
+      run_ai_auto_fix "$port_data" "$fix_level" 2>/dev/null || true
+    else
+      show_ai_analysis_report "$port_data" 2>/dev/null || true
+    fi
   fi
 
   # Record scan to database if available (call plugin function directly)

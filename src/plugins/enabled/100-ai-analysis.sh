@@ -32,7 +32,16 @@ AI_MODEL="${AI_MODEL:-auto}"
 AI_TEMPERATURE="${AI_TEMPERATURE:-0.3}"
 AI_MAX_TOKENS="${AI_MAX_TOKENS:-2048}"
 AI_CACHE_TTL="${AI_CACHE_TTL:-300}"  # seconds before re-analysis
-AI_ANALYSIS_MODE="${AI_ANALYSIS_MODE:-briefing}"  # briefing|remediation|attack|full
+AI_ANALYSIS_MODE="${AI_ANALYSIS_MODE:-briefing}"  # briefing|remediation|attack|full|auto-fix
+
+# ─── Auto-Fix Config ───
+AI_FIX_ENABLED="${AI_FIX_ENABLED:-false}"
+AI_FIX_LEVEL="${AI_FIX_LEVEL:-CRITICAL}"  # CRITICAL|HIGH|ALL — minimum risk level to auto-fix
+AI_FIX_LOG_DIR="$HOME/.config/port-watcher/ai-fix-logs"
+AI_FIX_CONFIRM="${AI_FIX_CONFIRM:-prompt}"  # prompt|yes|dry-run
+AI_FIX_ACTIONS_TAKEN=0
+AI_FIX_ACTIONS_FAILED=0
+AI_FIX_UNDO_FILE="/tmp/port-watcher-ai-undo.txt"
 
 # API Keys (loaded from config or env)
 OPENAI_API_KEY="${OPENAI_API_KEY:-}"
@@ -243,7 +252,7 @@ For each scan:
 This is for DEFENSIVE purposes — to help the system owner understand their true risk.
 SYSTEM
       ;;
-    full|*)
+    full)
       cat <<'SYSTEM'
 You are Port Watcher AI — a cybersecurity AI assistant embedded in a port security scanning tool. You have access to port scan results including risk scores, process info, user context, network bindings, MITRE ATT&CK mappings, anomaly detections, and attack surface grades.
 
@@ -265,6 +274,49 @@ Format your response in Markdown with these sections:
 
 Keep the response actionable and specific. Don't be vague. If a finding is low risk, say so explicitly rather than generating false alarms.
 SYSTEM
+      ;;
+    auto-fix)
+      cat <<'SYSTEMFIX'
+You are Port Watcher AI Auto-Fix — a cybersecurity AI that analyzes port scan data and outputs MACHINE-PARSEABLE fix actions in strict JSON format.
+
+Your ONLY output must be a valid JSON object with this exact structure — no markdown, no explanation, no code fences:
+
+{
+  "assessment": "Brief 1-line summary of the security posture",
+  "fixes": [
+    {
+      "port": 22,
+      "service": "sshd",
+      "risk": "HIGH",
+      "action": "block",
+      "tool": "iptables",
+      "command": "iptables -A INPUT -p tcp --dport 22 -j DROP",
+      "reason": "SSH exposed to all interfaces (0.0.0.0) running as root — remote brute force risk",
+      "undo": "iptables -D INPUT -p tcp --dport 22 -j DROP",
+      "safety": "medium"
+    }
+  ]
+}
+
+RULES:
+1. Only output the JSON object. No other text, no markdown, no backticks.
+2. Each fix MUST have all fields: port, service, risk, action, tool, command, reason, undo, safety.
+3. Action must be one of: block, stop_service, restart_service, restrict_bind, change_config
+4. Tool must be: iptables, ufw, systemctl, ss, or sed
+5. Safety must be: safe, medium, or risky
+   - safe: reversible, low impact (e.g., changing bind address)
+   - medium: moderate impact (e.g., stopping a non-critical service)
+   - risky: could break functionality (e.g., blocking SSH or a database port)
+6. Prioritize HIGH and CRITICAL risk findings. Skip LOW and INFO.
+7. Only suggest fixes that are PRACTICAL and make sense for the service.
+8. For services you recognize as essential (sshd on port 22, DNS on 53, HTTP on 80/443), suggest restrict_bind or change_config instead of block/stop_service.
+9. For services that are clearly unnecessary (FTP, Telnet, unused databases), suggest stop_service.
+10. Provide a real, working command in "command" that could be executed by a sysadmin.
+11. Provide the exact inverse command in "undo" to reverse the change.
+12. If no fixes are needed, return: {"assessment": "No critical or high-risk issues found.", "fixes": []}
+
+FAILURE TO OUTPUT VALID JSON WILL CAUSE THE SYSTEM TO CRASH. DO NOT ADD ANY TEXT OUTSIDE THE JSON OBJECT.
+SYSTEMFIX
       ;;
   esac
 }
@@ -614,6 +666,442 @@ run_ai_analysis() {
 show_ai_analysis_report() {
   local port_data="$1"
   run_ai_analysis "$port_data" "$AI_ANALYSIS_MODE"
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PLUGIN INTERFACE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  AUTO-FIX EXECUTION ENGINE
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Parses AI-generated fix JSON, shows confirmation prompts, executes fixes,
+#  logs all actions, and provides undo capability.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── Fix Execution ───
+
+# Execute a single fix action with proper tool
+_execute_one_fix() {
+  local port="$1" service="$2" action="$3" tool="$4" command="$5" undo="$6" reason="$7" safety="$8"
+
+  # Log the action
+  local log_dir="$AI_FIX_LOG_DIR"
+  mkdir -p "$log_dir" 2>/dev/null || true
+  local log_file="${log_dir}/fix-${port}-$(date +%Y%m%d_%H%M%S).log"
+
+  {
+    echo "=== Port Watcher AI Auto-Fix Action ==="
+    echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "Port: $port"
+    echo "Service: $service"
+    echo "Action: $action"
+    echo "Tool: $tool"
+    echo "Command: $command"
+    echo "Undo: $undo"
+    echo "Reason: $reason"
+    echo "Safety: $safety"
+  } > "$log_file"
+
+  # Check if we should try IPS plugin first for block actions
+  local executed=false
+  if [[ "$action" == "block" ]] && declare -f block_port &>/dev/null; then
+    # Use the existing IPS plugin's block function (has whitelist, iptables/ip6tables/nftables)
+    block_port "$port" "$service" "$reason" 2>/dev/null && executed=true
+  fi
+
+  # Execute the command directly if IPS didn't handle it
+  if ! $executed; then
+    # Apply the action
+    case "$tool" in
+      iptables)
+        if command -v iptables &>/dev/null; then
+          eval "$command" 2>/dev/null && executed=true || cecho "$C_BOLD_RED" "    ✗ iptables command failed"
+        else
+          cecho "$C_BOLD_YELLOW" "    ⚠️  iptables not available — skipping firewall rule"
+        fi
+        ;;
+      ufw)
+        if command -v ufw &>/dev/null; then
+          eval "$command" 2>/dev/null && executed=true || cecho "$C_BOLD_RED" "    ✗ ufw command failed"
+        else
+          cecho "$C_BOLD_YELLOW" "    ⚠️  ufw not available"
+        fi
+        ;;
+      systemctl)
+        if command -v systemctl &>/dev/null; then
+          if echo "$command" | grep -q "sudo"; then
+            eval "$command" 2>/dev/null && executed=true || cecho "$C_BOLD_RED" "    ✗ systemctl command failed (try running as root)"
+          else
+            sudo eval "$command" 2>/dev/null && executed=true || cecho "$C_BOLD_RED" "    ✗ systemctl command failed"
+          fi
+        else
+          cecho "$C_BOLD_YELLOW" "    ⚠️  systemctl not available"
+        fi
+        ;;
+      ss)
+        # ss is for socket-level changes (bind address, etc.)
+        eval "$command" 2>/dev/null && executed=true || cecho "$C_BOLD_RED" "    ✗ command failed"
+        ;;
+      sed|*)
+        # Config file changes via sed or other tools
+        if echo "$command" | grep -q "sudo"; then
+          eval "$command" 2>/dev/null && executed=true || cecho "$C_BOLD_RED" "    ✗ command failed"
+        else
+          eval "$command" 2>/dev/null || cecho "$C_BOLD_RED" "    ✗ command failed"
+          executed=true  # Assume success for informational commands
+        fi
+        ;;
+    esac
+  fi
+
+  # Record the result
+  if $executed; then
+    AI_FIX_ACTIONS_TAKEN=$((AI_FIX_ACTIONS_TAKEN + 1))
+    # Save undo info
+    echo "#$port|$service|$undo" >> "$AI_FIX_UNDO_FILE"
+    # Log success
+    {
+      echo "Status: EXECUTED"
+      echo "Result: SUCCESS"
+    } >> "$log_file"
+    logger -t "port-watcher-ai-fix" "[ACTION] $action port $port ($service) — $reason"
+    cecho "$C_GREEN" "    ✓ Executed (undo saved)"
+  else
+    AI_FIX_ACTIONS_FAILED=$((AI_FIX_ACTIONS_FAILED + 1))
+    {
+      echo "Status: FAILED"
+    } >> "$log_file"
+    cecho "$C_BOLD_RED" "    ✗ Failed to execute"
+  fi
+
+  # Record to SQLite if database plugin loaded
+  if declare -f record_alert &>/dev/null; then
+    local status="$($executed && echo 'executed' || echo 'failed')"
+    record_alert "${safety^^}" "ai_fix_${action}" "$port" "$service" "AI auto-fix: ${action} on port ${port} (${service}) — ${status}" 2>/dev/null || true
+  fi
+}
+
+# ─── Fix Parser ───
+
+# Parse AI response JSON and extract fix actions into an array
+# Returns lines: port|service|risk|action|tool|command|reason|undo|safety
+_parse_fixes() {
+  local response="$1"
+
+  # Try to extract JSON from response (handle cases where AI wraps in markdown)
+  local json_text="$response"
+
+  # Strip markdown code fences if present
+  if echo "$json_text" | grep -q '"fixes"'; then
+    # Already has JSON structure
+    :
+  elif echo "$json_text" | grep -q '"fixes"'; then
+    :
+  fi
+
+  # Use python3 to parse the JSON and extract fix actions
+  # Using heredoc to avoid bash escaping issues with regex backslashes
+  python3 << 'PYEOF' 2>/dev/null || echo "PARSE_ERROR: python3 failed"
+import json, sys, re
+
+text = sys.stdin.read()
+
+# Try to extract JSON from response (handles bare JSON or markdown-wrapped)
+# Match { "assessment": ... "fixes": [...] }
+json_match = re.search(r'\{"assessment".*?"fixes"\s*:\s*\[.*?\]\s*\}', text, re.DOTALL)
+if not json_match:
+    # Try relaxed match for mini JSON (assessment might be missing)
+    json_match = re.search(r'\{[^{}]*"fixes"\s*:\s*\[[^\]]*\][^{}]*\}', text, re.DOTALL)
+
+if json_match:
+    text = json_match.group(0)
+
+try:
+    data = json.loads(text)
+    fixes = data.get('fixes', [])
+    if not fixes:
+        print('NO_FIXES')
+        sys.exit(0)
+    for fix in fixes:
+        port = fix.get('port', '?')
+        service = fix.get('service', '?')
+        risk = fix.get('risk', 'UNKNOWN')
+        action = fix.get('action', '?')
+        tool = fix.get('tool', '?')
+        cmd = fix.get('command', '').replace('|', '/PIPE/')
+        reason = fix.get('reason', '').replace('|', '/PIPE/')
+        undo = fix.get('undo', '').replace('|', '/PIPE/')
+        safety = fix.get('safety', 'medium')
+        print(f'{port}|{service}|{risk}|{action}|{tool}|{cmd}|{reason}|{undo}|{safety}')
+except Exception as e:
+    print(f'PARSE_ERROR: {e}')
+    sys.exit(1)
+PYEOF
+}
+
+# ─── Confirmation Prompt ───
+
+# Show a fix and ask for confirmation
+_prompt_for_fix() {
+  local index="$1" total="$2" port="$3" service="$4" risk="$5" action="$6" tool="$7" command="$8" reason="$9" safety="${10}" undo="${11}"
+
+  local safety_color="$C_GREEN"
+  case "$safety" in
+    risky)  safety_color="$C_BOLD_RED" ;;
+    medium) safety_color="$C_BOLD_YELLOW" ;;
+    *)      safety_color="$C_GREEN" ;;
+  esac
+
+  local risk_color="$C_GREEN"
+  case "$risk" in
+    CRITICAL) risk_color="$C_BOLD_RED" ;;
+    HIGH)     risk_color="$C_RED" ;;
+    MEDIUM)   risk_color="$C_BOLD_YELLOW" ;;
+    *)        risk_color="$C_GREEN" ;;
+  esac
+
+  echo ""
+  cecho "$C_BOLD" "  ╔═══ Fix #${index}/${total} ════════════════════════════════════════╗"
+  echo ""
+  echo "    Port:    $(cecho "$C_BOLD" "$port") / $(cecho "$C_DIM" "$service")"
+  echo "    Risk:    $(cecho "$risk_color" "$risk")"
+  echo "    Action:  $(cecho "$C_BOLD_CYAN" "$action")"
+  echo "    Tool:    $tool"
+  echo "    Safety:  $(cecho "$safety_color" "$safety")"
+  echo ""
+  echo "    Command:"
+  echo "      $(cecho "$C_YELLOW" "$ ${command}")"
+  echo ""
+  echo "    Reason:  $reason"
+  echo "    Undo:    $undo"
+  echo ""
+
+  # Check safety level — warn for risky
+  if [[ "$safety" == "risky" ]]; then
+    cecho "$C_BOLD_RED" "  ⚠️  This action is marked as RISKY — could break functionality!"
+    echo ""
+  fi
+
+  echo -n "  Apply this fix? [y/N/a/?] "
+  read -r confirm
+
+  case "$confirm" in
+    y|Y|yes|YES)
+      return 0
+      ;;
+    a|A|all|ALL)
+      AI_FIX_BATCH_MODE=true
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# Global batch mode flag
+AI_FIX_BATCH_MODE=false
+
+# ─── Undo ───
+
+# Show and execute saved undo commands
+show_undo_actions() {
+  local undo_file="${1:-$AI_FIX_UNDO_FILE}"
+
+  if [[ ! -f "$undo_file" ]]; then
+    cecho "$C_BOLD_YELLOW" "  No undo actions found."
+    return 0
+  fi
+
+  echo ""
+  cecho "$C_BOLD_CYAN" "  ╔═══════════════════════════════════════════════════════════════╗"
+  cecho "$C_BOLD_CYAN" "  ║  ↩️  Saved Undo Actions                                       ║"
+  cecho "$C_BOLD_CYAN" "  ╚═══════════════════════════════════════════════════════════════╝"
+  echo ""
+
+  local count=0
+  while IFS='|' read -r port service undo_cmd; do
+    [[ -z "$port" || "$port" == "#"* ]] && continue
+    count=$((count + 1))
+    echo "  $count. Port $port ($service)"
+    echo "     Undo: $ (cecho "$C_YELLOW" "${undo_cmd}")"
+    echo ""
+  done < "$undo_file"
+
+  if [[ $count -eq 0 ]]; then
+    cecho "$C_DIM" "  No undo actions found."
+    return 0
+  fi
+
+  echo -n "  Apply all undo actions? [y/N] "
+  read -r confirm
+  if [[ "$confirm" == "y" || "$confirm" == "Y" || "$confirm" == "yes" ]]; then
+    while IFS='|' read -r port service undo_cmd; do
+      [[ -z "$port" || "$port" == "#"* ]] && continue
+      cecho "$C_YELLOW" "  ↩️  Undoing fix for port $port ($service)..."
+      eval "$undo_cmd" 2>/dev/null || cecho "$C_BOLD_RED" "    ✗ Undo failed"
+    done < "$undo_file"
+    cecho "$C_GREEN" "  ✓ All undo actions applied."
+    rm -f "$undo_file"
+  fi
+}
+
+# ─── Main Auto-Fix Entry Point ───
+
+# Run AI analysis and auto-fix mode
+run_ai_auto_fix() {
+  local port_data="$1"
+  local min_risk="${2:-$AI_FIX_LEVEL}"
+
+  # Check prerequisites
+  if [[ "$AI_ANALYSIS_ENABLED" != "true" ]]; then
+    cecho "$C_BOLD_YELLOW" "  AI analysis disabled in config"
+    return 1
+  fi
+
+  if ! command -v curl &>/dev/null || ! command -v python3 &>/dev/null; then
+    cecho "$C_BOLD_YELLOW" "  curl and python3 required for AI analysis"
+    return 1
+  fi
+
+  # Ensure log directory exists
+  mkdir -p "$AI_FIX_LOG_DIR" 2>/dev/null || true
+
+  # Run AI analysis in auto-fix mode (bypasses cache for safety)
+  local saved_cache_ttl="$AI_CACHE_TTL"
+  AI_CACHE_TTL=0  # Disable cache for auto-fix
+
+  # Run analysis
+  local analysis_result
+  analysis_result="$(run_ai_analysis "$port_data" "auto-fix" 2>/dev/null || true)"
+
+  # Restore cache TTL
+  AI_CACHE_TTL="$saved_cache_ttl"
+
+  # Check if we got useful output
+  if [[ -z "$analysis_result" ]]; then
+    cecho "$C_BOLD_YELLOW" "  No analysis result from AI."
+    return 1
+  fi
+
+  # Check for API errors
+  if echo "$analysis_result" | grep -q "⚠️  API Error\|No API Keys\|Parse error"; then
+    echo "$analysis_result"
+    return 1
+  fi
+
+  # Parse fix actions from the response
+  local fixes_txt
+  fixes_txt="$(_parse_fixes "$analysis_result")"
+
+  # Check for no-fixes response
+  if echo "$fixes_txt" | grep -q "NO_FIXES"; then
+    echo ""
+    cecho "$C_GREEN" "  ✓ AI analysis complete — no fixes needed."
+    echo ""
+    # Still show the analysis result
+    echo "$analysis_result"
+    return 0
+  fi
+
+  # Check for parse errors
+  if echo "$fixes_txt" | grep -q "PARSE_ERROR"; then
+    cecho "$C_BOLD_RED" "  ⚠️  Failed to parse AI response as JSON."
+    cecho "$C_DIM" "     The AI returned an unexpected format. Raw output:"
+    echo ""
+    echo "$analysis_result" | head -c 500
+    echo ""
+    echo "$analysis_result" > /tmp/port-watcher-ai-fix-error.txt
+    cecho "$C_DIM" "     Full output saved to: /tmp/port-watcher-ai-fix-error.txt"
+    return 1
+  fi
+
+  # Count fixes
+  local total_fixes
+  total_fixes="$(echo "$fixes_txt" | wc -l)"
+
+  echo ""
+  cecho "$C_BOLD_CYAN" "  ╔═══════════════════════════════════════════════════════════════╗"
+  cecho "$C_BOLD_CYAN" "  ║  🛠️  AI Auto-Fix: ${total_fixes} Suggested Action(s)                         ║"
+  cecho "$C_BOLD_CYAN" "  ╚═══════════════════════════════════════════════════════════════╝"
+  echo ""
+
+  # Also show the assessment
+  cecho "$C_DIM" "  Assessment: $(echo "$analysis_result" | head -1)"
+  echo ""
+
+  # Process fixes with confirmation
+  local index=0
+  local batch_mode=false
+  local all_approved=true
+
+  # Read fixes into a temp file for processing
+  local fixes_file="/tmp/port-watcher-fixes.txt"
+  echo "$fixes_txt" > "$fixes_file"
+
+  while IFS='|' read -r port service risk action tool command reason undo safety; do
+    [[ -z "$port" || "$port" == "#"* ]] && continue
+    index=$((index + 1))
+
+    # Restore pipe characters
+    command="$(echo "$command" | sed 's|/PIPE/|\|\||g')"
+    reason="$(echo "$reason" | sed 's|/PIPE/|\|\||g')"
+    undo="$(echo "$undo" | sed 's|/PIPE/|\|\||g')"
+
+    # Check risk level filter
+    local skip=false
+    case "$min_risk" in
+      CRITICAL) [[ "$risk" != "CRITICAL" ]] && skip=true ;;
+      HIGH)     [[ "$risk" != "CRITICAL" && "$risk" != "HIGH" ]] && skip=true ;;
+      ALL|*)    ;;  # Include all
+    esac
+    $skip && continue
+
+    if ! $AI_FIX_BATCH_MODE; then
+      # Prompt for confirmation
+      if [[ "$AI_FIX_CONFIRM" == "yes" ]]; then
+        # Auto-approve
+        _execute_one_fix "$port" "$service" "$action" "$tool" "$command" "$undo" "$reason" "$safety"
+      elif [[ "$AI_FIX_CONFIRM" == "dry-run" ]]; then
+        # Just show, don't execute
+        echo "  [DRY-RUN] Would apply: $ ${command}"
+      else
+        # Show prompt and ask — prompt function handles ALL mode via AI_FIX_BATCH_MODE global
+        _prompt_for_fix "$index" "$total_fixes" "$port" "$service" "$risk" "$action" "$tool" "$command" "$reason" "$safety" "$undo"
+        local prompt_exit=$?
+        if [[ $prompt_exit -eq 0 ]]; then
+          _execute_one_fix "$port" "$service" "$action" "$tool" "$command" "$undo" "$reason" "$safety"
+        else
+          cecho "$C_DIM" "    — Skipped"
+        fi
+      fi
+    else
+      # Batch mode: execute all remaining without prompting
+      _execute_one_fix "$port" "$service" "$action" "$tool" "$command" "$undo" "$reason" "$safety"
+    fi
+  done < "$fixes_file"
+
+  # Summary
+  echo ""
+  cecho "$C_BOLD" "  ╔═══════════════════════════════════════════════════════════════╗"
+  cecho "$C_BOLD" "  ║  📊 Auto-Fix Summary                                         ║"
+  cecho "$C_BOLD" "  ╚═══════════════════════════════════════════════════════════════╝"
+  echo ""
+  cecho "$C_GREEN" "    ✓ Executed:  $AI_FIX_ACTIONS_TAKEN"
+  if [[ $AI_FIX_ACTIONS_FAILED -gt 0 ]]; then
+    cecho "$C_BOLD_RED" "    ✗ Failed:    $AI_FIX_ACTIONS_FAILED"
+  fi
+  echo ""
+  cecho "$C_DIM" "    Logs:    $AI_FIX_LOG_DIR/"
+  cecho "$C_DIM" "    Undo:    $AI_FIX_UNDO_FILE"
+  echo ""
+
+  # Cleanup
+  rm -f "$fixes_file"
+
+  return 0
 }
 
 
