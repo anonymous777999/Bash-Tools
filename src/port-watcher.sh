@@ -1225,11 +1225,12 @@ show_attack_mapping() {
   echo ""
 
   if [[ "$TABLE_STYLE" == "unicode" ]]; then
+    # Plain-text headers (no cecho/ANSI codes which break printf width padding)
     printf "│ %-6s │ %-18s │ %-28s │ %-18s │\n" \
-      "$(cecho "$C_BOLD_YELLOW" "PORT")" \
-      "$(cecho "$C_BOLD_YELLOW" "SERVICE")" \
-      "$(cecho "$C_BOLD_YELLOW" "ATT&CK TECHNIQUE")" \
-      "$(cecho "$C_BOLD_YELLOW" "TACTIC")"
+      "PORT" \
+      "SERVICE" \
+      "ATT&CK TECHNIQUE" \
+      "TACTIC"
     echo "$(printf '├────────┼────────────────────┼──────────────────────────────┼────────────────────┤')"
 
     # Only display if mitre-attack plugin was loaded
