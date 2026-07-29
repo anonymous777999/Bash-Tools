@@ -789,15 +789,15 @@ output_table() {
       sep_border+="┤"
 
       printf "%s\n" "$(cecho "$C_BOLD" "$top_border")"
-      printf "│ %s │ %s │ %-8s │ %-16s │ %-10s │ %-6s" \
-        "$(cecho "$C_BOLD_YELLOW" "PORT")" \
-        "$(cecho "$C_BOLD_YELLOW" "PID")" \
-        "$(cecho "$C_BOLD_YELLOW" "USER")" \
-        "$(cecho "$C_BOLD_YELLOW" "PROCESS")" \
-        "$(cecho "$C_BOLD_YELLOW" "BIND")" \
-        "$(cecho "$C_BOLD_YELLOW" "RISK")"
-      $has_attack && printf " │ %-7s" "$(cecho "$C_BOLD_YELLOW" "ATT&CK")"
-      $has_anomaly && printf " │ %-8s" "$(cecho "$C_BOLD_YELLOW" "ANOMALY")"
+      printf "│ %-5s │ %-4s │ %-8s │ %-16s │ %-10s │ %-6s" \
+        "PORT" \
+        "PID" \
+        "USER" \
+        "PROCESS" \
+        "BIND" \
+        "RISK"
+      $has_attack && printf " │ %-7s" "ATT&CK"
+      $has_anomaly && printf " │ %-8s" "ANOMALY"
       printf " │\n"
       printf "%s\n" "$(cecho "$C_BOLD" "$sep_border")"
     else

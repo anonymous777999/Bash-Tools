@@ -352,11 +352,12 @@ show_anomaly_report() {
   # Per-port anomalies
   if [[ "$TABLE_STYLE" == "unicode" ]]; then
     echo "  $(cecho "$C_BOLD" "$(printf '┌───────┬────────┬────────┬─────────────────────────────────────┐')")"
+    # Plain-text headers (no cecho inside printf — breaks alignment)
     echo "  $(printf '│ %-5s │ %-6s │ %-6s │ %-35s │' \
-      "$(cecho "$C_BOLD_YELLOW" "PORT")" \
-      "$(cecho "$C_BOLD_YELLOW" "SCORE")" \
-      "$(cecho "$C_BOLD_YELLOW" "TYPE")" \
-      "$(cecho "$C_BOLD_YELLOW" "DETAIL")")"
+      "PORT" \
+      "SCORE" \
+      "TYPE" \
+      "DETAIL")"
     echo "  $(cecho "$C_BOLD" "$(printf '├───────┼────────┼────────┼─────────────────────────────────────┤')")"
   fi
 

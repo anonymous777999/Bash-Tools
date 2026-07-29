@@ -365,11 +365,12 @@ show_threat_intel_report() {
 
   if [[ "$TABLE_STYLE" == "unicode" ]]; then
     echo "  $(cecho "$C_BOLD" "$(printf '┌───────┬──────────┬──────────────────────┬──────────────────────────────────────┐')")"
+    # Plain-text headers (no cecho inside printf — breaks alignment)
     echo "  $(printf '│ %-5s │ %-8s │ %-20s │ %-36s │' \
-      "$(cecho "$C_BOLD_YELLOW" "PORT")" \
-      "$(cecho "$C_BOLD_YELLOW" "SOURCE")" \
-      "$(cecho "$C_BOLD_YELLOW" "IP/SERVICE")" \
-      "$(cecho "$C_BOLD_YELLOW" "DETAIL")")"
+      "PORT" \
+      "SOURCE" \
+      "IP/SERVICE" \
+      "DETAIL")"
     echo "  $(cecho "$C_BOLD" "$(printf '├───────┼──────────┼──────────────────────┼──────────────────────────────────────┤')")"
   fi
 
