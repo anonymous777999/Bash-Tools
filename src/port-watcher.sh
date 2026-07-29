@@ -1536,5 +1536,6 @@ main() {
   fi
 }
 
-# Run main
-main "$@"
+# Run main (|| true prevents any final non-zero exit from propagating)
+main "$@" || true
+exit 0
