@@ -125,6 +125,10 @@ CLI_IPS_LEVEL=""
 CLI_DASHBOARD=false
 CLI_DASHBOARD_PORT=""
 CLI_METRICS=false
+SHOW_TOPOLOGY=false
+SHOW_PROFILE=false
+PROFILE_SNAPSHOT=false
+SHOW_THREAT_INTEL=false
 
 # ─── SQLITE DATABASE GLOBALS ───
 DB_PATH="$HOME/.config/port-watcher/history.db"
@@ -169,6 +173,10 @@ ${C_BOLD}Options:${C_RESET}
       --dashboard           Start embedded web dashboard server (port 9090)
       --dashboard-port <p>  Dashboard port (default: 9090)
       --metrics             Output Prometheus metrics format to stdout
+      --topology            Show network topology map (ARP scan, mDNS, dependency graph)
+      --profile             Show process behavior report (CPU/mem/FDs/threads/hash changes)
+      --profile-snapshot    Record current binary hashes as baseline for --profile
+      --threat-intel        Check services on Shodan/AbuseIPDB/built-in threat feeds
       --version            Show version information
   -h, --help               Show this help message
 
@@ -193,6 +201,10 @@ ${C_BOLD}Examples:${C_RESET}
   ${SCRIPT_NAME} --dashboard                  # Start web dashboard on port 9090
   ${SCRIPT_NAME} --dashboard-port 8080        # Start dashboard on custom port
   ${SCRIPT_NAME} --metrics                    # Output Prometheus metrics to stdout
+  ${SCRIPT_NAME} --topology                   # Show network topology map
+  ${SCRIPT_NAME} --profile                    # Show process behavior report
+  ${SCRIPT_NAME} --profile-snapshot           # Record binary hash baseline
+  ${SCRIPT_NAME} --threat-intel               # Check services on threat feeds
   ${SCRIPT_NAME} --syslog                     # Log to syslog
 
 ${C_BOLD}Risk Levels:${C_RESET}
@@ -218,6 +230,10 @@ ${C_BOLD}Plugins:${C_RESET}
   --dashboard              Start embedded web dashboard server (http://127.0.0.1:9090)
   --dashboard-port <port>  Custom dashboard port (default: 9090)
   --metrics                Output Prometheus metrics format to stdout
+  --topology               Show network topology map (ARP scan, mDNS, ASCII graph)
+  --profile                Show process behavior report (CPU/mem/hash/threads, etc.)
+  --profile-snapshot       Record current binary hashes as baseline profile
+  --threat-intel           Check services on Shodan/AbuseIPDB/built-in threat feeds
 
 ${C_BOLD}Configuration:${C_RESET}
   ~/.config/port-watcher/ports.conf           User config
@@ -325,6 +341,19 @@ parse_args() {
         ;;
       --metrics)
         CLI_METRICS=true
+        ;;
+      --topology)
+        SHOW_TOPOLOGY=true
+        ;;
+      --profile)
+        SHOW_PROFILE=true
+        ;;
+      --profile-snapshot)
+        SHOW_PROFILE=true
+        PROFILE_SNAPSHOT=true
+        ;;
+      --threat-intel)
+        SHOW_THREAT_INTEL=true
         ;;
       --version)
         echo "Port Watcher v${VERSION}"
@@ -1349,6 +1378,37 @@ main() {
   # Show Attack Surface Score report if requested
   if $SHOW_SCORE && declare -f show_score_report &>/dev/null; then
     show_score_report
+  fi
+
+  # Show Network Topology if requested
+  if $SHOW_TOPOLOGY && declare -f run_topology_scan &>/dev/null; then
+    if [[ "$OUTPUT_MODE" == "json" ]] && declare -f render_topology_json &>/dev/null; then
+      render_topology_json "$port_data" 2>/dev/null || true
+    else
+      run_topology_scan "$port_data" 2>/dev/null || true
+    fi
+  fi
+
+  # Show Process Behavior Profile if requested
+  if $SHOW_PROFILE && declare -f run_process_profiler &>/dev/null; then
+    run_process_profiler "$port_data" 2>/dev/null || true
+    if $PROFILE_SNAPSHOT; then
+      : # Snapshot was already taken inside run_process_profiler
+    elif declare -f show_process_profile_report &>/dev/null; then
+      show_process_profile_report 2>/dev/null || true
+    fi
+  fi
+
+  # Show Threat Intelligence if requested
+  if $SHOW_THREAT_INTEL && declare -f run_threat_intel &>/dev/null; then
+    run_threat_intel "$port_data" 2>/dev/null || true
+    if declare -f show_threat_intel_report &>/dev/null; then
+      show_threat_intel_report 2>/dev/null || true
+    fi
+    # Apply threat intel risk escalation if anomaly detection is also active
+    if declare -f apply_threat_intel_risk &>/dev/null; then
+      apply_threat_intel_risk "$port_data" 2>/dev/null || true
+    fi
   fi
 
   # Record scan to database if available (call plugin function directly)
