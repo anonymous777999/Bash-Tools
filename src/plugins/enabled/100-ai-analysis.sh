@@ -808,15 +808,14 @@ import json, sys, re
 
 text = sys.stdin.read()
 
-# Try to extract JSON from response (handles bare JSON or markdown-wrapped)
-# Match { "assessment": ... "fixes": [...] }
-json_match = re.search(r'\{"assessment".*?"fixes"\s*:\s*\[.*?\]\s*\}', text, re.DOTALL)
-if not json_match:
-    # Try relaxed match for mini JSON (assessment might be missing)
-    json_match = re.search(r'\{[^{}]*"fixes"\s*:\s*\[[^\]]*\][^{}]*\}', text, re.DOTALL)
+# Try to extract JSON from response (handles bare JSON or markdown-wrapped)    # Match { "assessment": ... "fixes": [...] } (allow whitespace after opening brace)
+    json_match = re.search(r'\{\s*"assessment".*?"fixes"\s*:\s*\[.*?\]\s*\}', text, re.DOTALL)
+    if not json_match:
+        # Try relaxed match for mini JSON (assessment might be missing)
+        json_match = re.search(r'\{[^{}]*"fixes"\s*:\s*\[[^\]]*\][^{}]*\}', text, re.DOTALL)
 
-if json_match:
-    text = json_match.group(0)
+    if json_match:
+        text = json_match.group(0)
 
 try:
     data = json.loads(text)
