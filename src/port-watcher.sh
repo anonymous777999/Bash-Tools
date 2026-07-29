@@ -124,6 +124,7 @@ CLI_AUTO_RESPONSE=false
 CLI_IPS_LEVEL=""
 CLI_DASHBOARD=false
 CLI_DASHBOARD_PORT=""
+CLI_METRICS=false
 
 # ─── SQLITE DATABASE GLOBALS ───
 DB_PATH="$HOME/.config/port-watcher/history.db"
@@ -167,6 +168,7 @@ ${C_BOLD}Options:${C_RESET}
       --auto-response-level <level>  Auto-response threshold: CRITICAL, HIGH, ALL (default: CRITICAL)
       --dashboard           Start embedded web dashboard server (port 9090)
       --dashboard-port <p>  Dashboard port (default: 9090)
+      --metrics             Output Prometheus metrics format to stdout
       --version            Show version information
   -h, --help               Show this help message
 
@@ -190,6 +192,7 @@ ${C_BOLD}Examples:${C_RESET}
   ${SCRIPT_NAME} --auto-response              # Auto-block CRITICAL ports
   ${SCRIPT_NAME} --dashboard                  # Start web dashboard on port 9090
   ${SCRIPT_NAME} --dashboard-port 8080        # Start dashboard on custom port
+  ${SCRIPT_NAME} --metrics                    # Output Prometheus metrics to stdout
   ${SCRIPT_NAME} --syslog                     # Log to syslog
 
 ${C_BOLD}Risk Levels:${C_RESET}
@@ -214,6 +217,7 @@ ${C_BOLD}Plugins:${C_RESET}
   --auto-response-level    Set auto-response threshold: CRITICAL, HIGH, or ALL
   --dashboard              Start embedded web dashboard server (http://127.0.0.1:9090)
   --dashboard-port <port>  Custom dashboard port (default: 9090)
+  --metrics                Output Prometheus metrics format to stdout
 
 ${C_BOLD}Configuration:${C_RESET}
   ~/.config/port-watcher/ports.conf           User config
@@ -318,6 +322,9 @@ parse_args() {
         shift
         CLI_DASHBOARD_PORT="$1"
         CLI_DASHBOARD=true
+        ;;
+      --metrics)
+        CLI_METRICS=true
         ;;
       --version)
         echo "Port Watcher v${VERSION}"
@@ -1190,6 +1197,25 @@ main() {
 
   # Set up cleanup trap
   trap 'run_cleanup_hooks 2>/dev/null || true' EXIT
+
+  # If --metrics was passed standalone (without --dashboard), output Prometheus format
+  if $CLI_METRICS; then
+    local metrics_data
+    metrics_data="$(collect_ports)"
+    if declare -f run_anomaly_detection &>/dev/null && [[ -n "$metrics_data" ]]; then
+      load_anomaly_profile 2>/dev/null || true
+      run_anomaly_detection "$metrics_data" 2>/dev/null || true
+    fi
+    if declare -f calculate_attack_surface &>/dev/null; then
+      calculate_attack_surface "$metrics_data" 2>/dev/null || true
+    fi
+    if declare -f render_metrics &>/dev/null; then
+      render_metrics "$metrics_data" 2>/dev/null || true
+    else
+      echo "# ERROR: Prometheus metrics plugin not loaded. Enable 80-prometheus-metrics.sh in plugins/enabled/"
+    fi
+    exit 0
+  fi
 
   # Handle database-only commands (skip scan if just querying)
   local db_cmd=false

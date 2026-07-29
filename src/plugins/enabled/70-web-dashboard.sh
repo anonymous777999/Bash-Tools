@@ -19,6 +19,12 @@
 #    GET /             → HTML dashboard (JS-powered, SSE real-time)
 #    GET /api/scan     → JSON scan data (for polling fallback)
 #    GET /api/events   → SSE event stream (push updates in real-time)
+#    GET /metrics      → Prometheus text format (for Grafana scraping)
+#
+#  Phase 5:
+#    • /metrics endpoint with Prometheus gauge metrics
+#    • Per-port risk_score, anomaly_score, port counts, attack_surface
+#    • Scrape configuration: localhost:9090/metrics
 #
 #  v2 Features:
 #    • Server-Sent Events (SSE) — push updates instead of polling fetch
@@ -38,6 +44,7 @@ DASHBOARD_REFRESH_SECONDS="${DASHBOARD_REFRESH_SECONDS:-5}"
 # ─── Temp files ───
 DASH_HTML_FILE="/tmp/port-watcher-dashboard.html"
 DASH_JSON_FILE="/tmp/port-watcher-scan.json"
+DASH_METRICS_FILE="${DASH_METRICS_FILE:-/tmp/port-watcher-metrics.prom}"
 DASH_SERVER_SCRIPT="/tmp/port-watcher-server.sh"
 
 # ─── CLI Flags (set from port-watcher.sh) ───
@@ -71,6 +78,10 @@ render_dashboard_state() {
 
   render_html "$data" > "$DASH_HTML_FILE"
   render_json_api "$data" > "$DASH_JSON_FILE"
+  # Render Prometheus metrics if the function exists
+  if declare -f render_metrics &>/dev/null; then
+    render_metrics "$data" > "$DASH_METRICS_FILE" 2>/dev/null || true
+  fi
 }
 
 # ─── Write the routing script for socat/ncat ───
@@ -85,6 +96,7 @@ write_server_script() {
 # Called by socat/ncat for each HTTP request
 HTML_FILE="/tmp/port-watcher-dashboard.html"
 JSON_FILE="/tmp/port-watcher-scan.json"
+METRICS_FILE="/tmp/port-watcher-metrics.prom"
 
 # Read HTTP request line
 read request_line 2>/dev/null || true
@@ -122,6 +134,19 @@ case "$path" in
       sleep 3
     done
     ;;
+  /metrics)
+    echo "HTTP/1.1 200 OK"
+    echo "Content-Type: text/plain; version=0.0.4; charset=UTF-8"
+    echo "Access-Control-Allow-Origin: *"
+    echo "Cache-Control: no-cache, no-store, must-revalidate"
+    echo "Connection: close"
+    echo ""
+    if [ -f "$METRICS_FILE" ]; then
+      cat "$METRICS_FILE"
+    else
+      echo "# No metrics available yet"
+    fi
+    ;;
   /|/index.html|"")
     echo "HTTP/1.1 200 OK"
     echo "Content-Type: text/html; charset=UTF-8"
@@ -139,7 +164,7 @@ case "$path" in
     echo "Content-Type: text/plain"
     echo "Connection: close"
     echo ""
-    echo "404 - Available: /  /api/scan  /api/events"
+    echo "404 - Available: /  /api/scan  /api/events  /metrics"
     ;;
 esac
 SRVEOF
@@ -402,6 +427,7 @@ start_dashboard_server() {
 
   cecho "$C_BOLD_GREEN" "Dashboard: http://${DASHBOARD_HOST}:${DASHBOARD_PORT}"
   cecho "$C_DIM" "   API: http://${DASHBOARD_HOST}:${DASHBOARD_PORT}/api/scan"
+  cecho "$C_DIM" "   Metrics: http://${DASHBOARD_HOST}:${DASHBOARD_PORT}/metrics"
   echo ""
 
   # Fork the server process (background)
@@ -457,5 +483,5 @@ plugin_cleanup_web-dashboard() {
     [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
     rm -f "$pid_file" 2>/dev/null || true
   fi
-  rm -f "$DASH_HTML_FILE" "$DASH_JSON_FILE" "$DASH_SERVER_SCRIPT" 2>/dev/null || true
+  rm -f "$DASH_HTML_FILE" "$DASH_JSON_FILE" "$DASH_METRICS_FILE" "$DASH_SERVER_SCRIPT" 2>/dev/null || true
 }
