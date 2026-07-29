@@ -118,6 +118,7 @@ declare -A RISK_COLORS
 # ─── PLUGIN SYSTEM GLOBALS ───
 SHOW_PLUGINS=false
 SHOW_ATTACK=false
+SHOW_ANOMALIES=false
 
 # ─── SQLITE DATABASE GLOBALS ───
 DB_PATH="$HOME/.config/port-watcher/history.db"
@@ -155,6 +156,7 @@ ${C_BOLD}Options:${C_RESET}
       --timeline           Show alert timeline
       --plugins            List loaded plugins
       --attack             Show MITRE ATT&CK mapping table
+      --anomalies          Show AI anomaly detection report
       --version            Show version information
   -h, --help               Show this help message
 
@@ -172,7 +174,8 @@ ${C_BOLD}Examples:${C_RESET}
   ${SCRIPT_NAME} --history 6379               # Port history from DB
   ${SCRIPT_NAME} --trend 14                   # 14-day risk trend
   ${SCRIPT_NAME} --plugins                    # List plugins
-  ${SCRIPT_NAME} --attack                     # MITRE ATT&CK table
+  ${SCRIPT_NAME}  --attack                     # MITRE ATT&CK table
+  ${SCRIPT_NAME} --anomalies                  # Anomaly detection report
   ${SCRIPT_NAME} --syslog                     # Log to syslog
 
 ${C_BOLD}Risk Levels:${C_RESET}
@@ -191,6 +194,7 @@ ${C_BOLD}Database Commands:${C_RESET}
 ${C_BOLD}Plugins:${C_RESET}
   --plugins                List loaded plugins
   --attack                 Show MITRE ATT&CK technique mapping
+  --anomalies              Show AI anomaly detection report (process/user/bind changes)
 
 ${C_BOLD}Configuration:${C_RESET}
   ~/.config/port-watcher/ports.conf           User config
@@ -273,6 +277,9 @@ parse_args() {
         ;;
       --attack)
         SHOW_ATTACK=true
+        ;;
+      --anomalies)
+        SHOW_ANOMALIES=true
         ;;
       --version)
         echo "Port Watcher v${VERSION}"
@@ -594,43 +601,43 @@ output_table() {
       echo ""
     fi
 
-    # Check if MITRE ATT&CK plugin is loaded (adds an extra column)
-    local has_attack=false
+    # Check which plugin columns are available
+    local has_attack=false has_anomaly=false
     declare -f mitre_lookup &>/dev/null && has_attack=true
+    declare -f run_anomaly_detection &>/dev/null && has_anomaly=true
 
     if [[ "$TABLE_STYLE" == "unicode" ]]; then
-      if $has_attack; then
-        printf "%s\n" "$(cecho "$C_BOLD" "$(printf '┌───────┬──────┬──────────┬──────────────────┬────────────┬──────────┬──────────┐')")"
-        printf "%-s│ %s │ %s │ %-16s │ %-12s │ %-8s │ %-8s │\n" \
-          "$(cecho "$C_BOLD" "│")" \
-          "$(cecho "$C_BOLD_YELLOW" "PORT")" \
-          "$(cecho "$C_BOLD_YELLOW" "PID")" \
-          "$(cecho "$C_BOLD_YELLOW" "USER")" \
-          "$(cecho "$C_BOLD_YELLOW" "PROCESS")" \
-          "$(cecho "$C_BOLD_YELLOW" "BIND")" \
-          "$(cecho "$C_BOLD_YELLOW" "RISK")" \
-          "$(cecho "$C_BOLD_YELLOW" "ATT&CK")"
-        printf "%s\n" "$(cecho "$C_BOLD" "$(printf '├───────┼──────┼──────────┼──────────────────┼────────────┼──────────┼──────────┤')")"
-      else
-        printf "%s\n" "$(cecho "$C_BOLD" "$(printf '┌───────┬──────┬──────────┬──────────────────┬────────────┬──────────┐')")"
-        printf "%-s│ %s │ %s │ %-16s │ %-12s │ %-8s │\n" \
-          "$(cecho "$C_BOLD" "│")" \
-          "$(cecho "$C_BOLD_YELLOW" "PORT")" \
-          "$(cecho "$C_BOLD_YELLOW" "PID")" \
-          "$(cecho "$C_BOLD_YELLOW" "USER")" \
-          "$(cecho "$C_BOLD_YELLOW" "PROCESS")" \
-          "$(cecho "$C_BOLD_YELLOW" "BIND")" \
-          "$(cecho "$C_BOLD_YELLOW" "RISK")"
-        printf "%s\n" "$(cecho "$C_BOLD" "$(printf '├───────┼──────┼──────────┼──────────────────┼────────────┼──────────┤')")"
-      fi
+      local top_border="┌───────┬──────┬──────────┬──────────────────┬────────────┬──────────"
+      local header_row="│ PORT  │ PID  │ USER      │ PROCESS          │ BIND       │ RISK    "
+      local sep_border="├───────┼──────┼──────────┼──────────────────┼────────────┼──────────"
+      $has_attack && top_border+="┬──────────" && header_row+=" │ ATT&CK " && sep_border+="┼──────────"
+      $has_anomaly && top_border+="┬───────────" && header_row+=" │ ANOMALY" && sep_border+="┼───────────"
+      top_border+="┐"
+      header_row+=" │"
+      sep_border+="┤"
+
+      printf "%s\n" "$(cecho "$C_BOLD" "$top_border")"
+      printf "%-s│ %s │ %s │ %-16s │ %-12s │ %-8s" \
+        "$(cecho "$C_BOLD" "│")" \
+        "$(cecho "$C_BOLD_YELLOW" "PORT")" \
+        "$(cecho "$C_BOLD_YELLOW" "PID")" \
+        "$(cecho "$C_BOLD_YELLOW" "USER")" \
+        "$(cecho "$C_BOLD_YELLOW" "PROCESS")" \
+        "$(cecho "$C_BOLD_YELLOW" "BIND")" \
+        "$(cecho "$C_BOLD_YELLOW" "RISK")"
+      $has_attack && printf " │ %-7s" "$(cecho "$C_BOLD_YELLOW" "ATT&CK")"
+      $has_anomaly && printf " │ %-8s" "$(cecho "$C_BOLD_YELLOW" "ANOMALY")"
+      printf " │\n"
+      printf "%s\n" "$(cecho "$C_BOLD" "$sep_border")"
     else
-      if $has_attack; then
-        echo "PORT   PID    USER       PROCESS           BIND          RISK       ATT&CK"
-        echo "────   ────   ────       ───────           ────          ────       ──────"
-      else
-        echo "PORT   PID    USER       PROCESS           BIND          RISK"
-        echo "────   ────   ────       ───────           ────          ────"
-      fi
+      echo -n "PORT   PID    USER       PROCESS           BIND          RISK"
+      $has_attack && echo -n "       ATT&CK"
+      $has_anomaly && echo -n "   ANOMALY"
+      echo ""
+      echo -n "────   ────   ────       ───────           ────          ────"
+      $has_attack && echo -n "       ──────"
+      $has_anomaly && echo -n "   ───────"
+      echo ""
     fi
     printed_header=true
   fi
@@ -650,9 +657,10 @@ output_table() {
     [[ -n "$FILTER_PROCESS" ]] && ! in_array "$process" ${FILTER_PROCESS//,/ } && continue
     [[ -n "$FILTER_USER" ]] && ! in_array "$user" ${FILTER_USER//,/ } && continue
 
-    # Check if MITRE ATT&CK plugin is loaded
-    local has_attack=false
+    # Check which plugin columns are available
+    local has_attack=false has_anomaly=false
     declare -f mitre_lookup &>/dev/null && has_attack=true
+    declare -f run_anomaly_detection &>/dev/null && has_anomaly=true
 
     # Get MITRE ATT&CK technique for this port
     local mitre_id="" mitre_display=""
@@ -667,20 +675,35 @@ output_table() {
       fi
     fi
 
+    # Get anomaly status for this port
+    local anomaly_display="" anomaly_score=0
+    if $has_anomaly; then
+      local anom_entry="${ANOMALY_DETECTIONS[$port]:-}"
+      if [[ -n "$anom_entry" ]]; then
+        anomaly_score="$(echo "$anom_entry" | cut -d'|' -f1)"
+        if [[ $anomaly_score -ge 50 ]]; then
+          anomaly_display="$(cecho "$C_BOLD_RED" "!$anomaly_score")"
+        elif [[ $anomaly_score -ge 30 ]]; then
+          anomaly_display="$(cecho "$C_BOLD_YELLOW" "Δ$anomaly_score")"
+        else
+          anomaly_display="$(cecho "$C_YELLOW" "Δ$anomaly_score")"
+        fi
+      else
+        anomaly_display="$(cecho "$C_DIM" "✓")"
+      fi
+    fi
+
     if [[ "$TABLE_STYLE" == "unicode" ]]; then
-      if $has_attack; then
-        printf "│ %-5s │ %-4s │ %-8s │ %-16s │ %-10s │ %s%-6s${C_RESET} │ %-8s │\n" \
-          "$port" "$pid" "$user" "$process" "$bind_addr" "$color" "$risk" "$mitre_display"
-      else
-        printf "│ %-5s │ %-4s │ %-8s │ %-16s │ %-10s │ %s%-6s${C_RESET} │\n" \
-          "$port" "$pid" "$user" "$process" "$bind_addr" "$color" "$risk"
-      fi
+      printf "│ %-5s │ %-4s │ %-8s │ %-16s │ %-10s │ %s%-6s${C_RESET}" \
+        "$port" "$pid" "$user" "$process" "$bind_addr" "$color" "$risk"
+      $has_attack && printf " │ %-7s" "$mitre_display"
+      $has_anomaly && printf " │ %-9s" "$anomaly_display"
+      printf " │\n"
     else
-      if $has_attack; then
-        echo " $(printf '%-5s' "$port") $(printf '%-5s' "$pid") $(printf '%-8s' "$user") $(printf '%-16s' "$process") $(printf '%-10s' "$bind_addr") $(cecho "$color" "$risk") $(printf '%-8s' "$mitre_display")"
-      else
-        echo " $(printf '%-5s' "$port") $(printf '%-5s' "$pid") $(printf '%-8s' "$user") $(printf '%-16s' "$process") $(printf '%-10s' "$bind_addr") $(cecho "$color" "$risk")"
-      fi
+      echo -n " $(printf '%-5s' "$port") $(printf '%-5s' "$pid") $(printf '%-8s' "$user") $(printf '%-16s' "$process") $(printf '%-10s' "$bind_addr") $(cecho "$color" "$risk")"
+      $has_attack && echo -n " $(printf '%-7s' "$mitre_display")"
+      $has_anomaly && echo -n " $(printf '%-9s' "$anomaly_display")"
+      echo ""
     fi
 
     # Send to syslog if enabled
@@ -688,13 +711,15 @@ output_table() {
   done <<< "$data"
 
   if $SHOW_HEADER && [[ "$TABLE_STYLE" == "unicode" ]]; then
-    local has_attack=false
+    local has_attack=false has_anomaly=false
     declare -f mitre_lookup &>/dev/null && has_attack=true
-    if $has_attack; then
-      printf "%s\n" "$(cecho "$C_DIM" "$(printf '└───────┴──────┴──────────┴──────────────────┴────────────┴──────────┴──────────┘')")"
-    else
-      printf "%s\n" "$(cecho "$C_DIM" "$(printf '└───────┴──────┴──────────┴──────────────────┴────────────┴──────────┘')")"
-    fi
+    declare -f run_anomaly_detection &>/dev/null && has_anomaly=true
+
+    local bottom_border="└───────┴──────┴──────────┴──────────────────┴────────────┴──────────"
+    $has_attack && bottom_border+="┴──────────"
+    $has_anomaly && bottom_border+="┴───────────"
+    bottom_border+="┘"
+    printf "%s\n" "$(cecho "$C_DIM" "$bottom_border")"
   fi
 }
 
@@ -1160,6 +1185,8 @@ main() {
     exit 0
   fi
 
+  # If --anomalies is the only flag, we'll show the report after the scan
+
   # Check dependencies
   if ! command -v lsof &>/dev/null && ! command -v ss &>/dev/null; then
     echo "Error: Neither 'lsof' nor 'ss' found. Install one of them." >&2
@@ -1188,6 +1215,12 @@ main() {
 
   # Run plugin analyze hooks
   run_analyze_hooks "$port_data" 2>/dev/null || true
+
+  # Run anomaly detection (compares current scan against learned profile)
+  if declare -f run_anomaly_detection &>/dev/null; then
+    load_anomaly_profile 2>/dev/null || true
+    run_anomaly_detection "$port_data" 2>/dev/null || true
+  fi
 
   # Run differential if baseline provided
   if $DIFFERENTIAL && [[ -n "$BASELINE_FILE" && -f "$BASELINE_FILE" ]]; then
@@ -1232,6 +1265,11 @@ main() {
         output_table "$port_data"
         ;;
     esac
+  fi
+
+  # Show anomaly report if requested
+  if $SHOW_ANOMALIES && declare -f show_anomaly_report &>/dev/null; then
+    show_anomaly_report
   fi
 
   # Record scan to database if available (call plugin function directly)
