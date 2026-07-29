@@ -48,7 +48,7 @@ calculate_attack_surface() {
   local base_score=0 critical_count=0 high_count=0 medium_count=0
   local low_count=0 unknown_count=0 total_ports=0
   local root_services=0 docker_exposed=false k8s_exposed=false
-  local unknown_ports=0
+  local unknown_ports=0 highest_score=0
 
   while IFS='|' read -r process pid user proto bind_addr port; do
     [[ -z "$port" ]] && continue

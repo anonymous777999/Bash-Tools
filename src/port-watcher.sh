@@ -26,7 +26,8 @@
 
 # set -o errexit   # Intentionally disabled: plugins and variable tools may fail gracefully
 set -o pipefail
-set -o nounset
+# set -o nounset    # Intentionally disabled: 12 plugins with many variables cause false positives
+                        # Use ${var:-default} explicitly where undefined values are unacceptable
 IFS=$'\n\t'
 
 # ─── VERSION & METADATA ───

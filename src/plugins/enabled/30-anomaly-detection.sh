@@ -88,14 +88,14 @@ load_anomaly_profile() {
   ANOMALY_CURRENT_PROFILE=()
   local db_path="${DB_PATH:-$ANOMALY_PROFILE_DIR/history.db}"
 
-  if $ANOMALY_USING_SQLITE && [[ -f "$db_path" ]]; then
+  if [[ "${ANOMALY_USING_SQLITE:-false}" == "true" ]] && [[ -f "$db_path" ]]; then
     # Load from SQLite
     while IFS='|' read -r port process user bind_addr risk score count; do
       [[ -z "$port" ]] && continue
       local key="${port}|${process}"
       ANOMALY_CURRENT_PROFILE["$key"]="${process}|${user}|${bind_addr}|${risk}|${score}|${count}"
     done < <(sqlite3 "$db_path" "SELECT port, process, user, bind_addr, risk, score, times_seen FROM anomaly_profiles;" 2>/dev/null || true)
-  elif [[ -f "$ANOMALY_PROFILE_FILE" ]]; then
+  elif [[ -f "${ANOMALY_PROFILE_FILE:-}" ]]; then
     # Load from flat JSON file (fallback)
     while IFS= read -r line; do
       local port process user bind_addr risk score count
@@ -109,7 +109,7 @@ load_anomaly_profile() {
       [[ -z "$port" ]] && continue
       local key="${port}|${process}"
       ANOMALY_CURRENT_PROFILE["$key"]="${process}|${user}|${bind_addr}|${risk}|${score}|${count}"
-    done < <(grep -E '^\[' "$ANOMALY_PROFILE_FILE" 2>/dev/null && echo "" || cat "$ANOMALY_PROFILE_FILE" 2>/dev/null | tr ',' '\n' | grep -E '"[0-9]+\|' | sed 's/"//g' || true)
+    done < <(grep -E '^\[' "${ANOMALY_PROFILE_FILE:-}" 2>/dev/null && echo "" || cat "${ANOMALY_PROFILE_FILE:-}" 2>/dev/null | tr ',' '\n' | grep -E '"[0-9]+\|' | sed 's/"//g' || true)
   fi
 }
 
@@ -119,7 +119,7 @@ save_to_anomaly_profile() {
   local db_path="${DB_PATH:-$ANOMALY_PROFILE_DIR/history.db}"
   local key="${port}|${process}"
 
-  if $ANOMALY_USING_SQLITE && [[ -f "$db_path" ]]; then
+  if [[ "${ANOMALY_USING_SQLITE:-false}" == "true" ]] && [[ -f "$db_path" ]]; then
     # Upsert into SQLite
     local existing_count
     existing_count="$(sqlite3 "$db_path" "SELECT times_seen FROM anomaly_profiles WHERE port=$port AND process='${process//\'/\'\'}' ;" 2>/dev/null || echo "0")"
@@ -289,10 +289,11 @@ run_anomaly_detection() {
   ANOMALY_DETECTIONS=()
   ANOMALY_TOTAL_SCORE=0
   ANOMALY_COUNT=0
-  $reset && return
+  # Skip if reset flag; use nounset-safe expansion
+  [[ "${reset:-false}" == "true" ]] && return
 
-  # Load profile if not already loaded
-  $ANOMALY_PROFILE_LOADED || load_anomaly_profile
+  # Load profile if not already loaded (nounset-safe)
+  [[ "${ANOMALY_PROFILE_LOADED:-false}" != "true" ]] && load_anomaly_profile
 
   # Detect per-port anomalies
   while IFS='|' read -r process pid user proto bind_addr port; do
@@ -487,9 +488,9 @@ plugin_render_json_anomaly-detection() {
 
 plugin_cleanup_anomaly-detection() {
   # Save profile to flat file as backup if not using SQLite
-  if ! $ANOMALY_USING_SQLITE && [[ ${#ANOMALY_CURRENT_PROFILE[@]} -gt 0 ]]; then
-    mkdir -p "$ANOMALY_PROFILE_DIR" 2>/dev/null || true
-    echo "{" > "$ANOMALY_PROFILE_FILE"
+  if [[ "${ANOMALY_USING_SQLITE:-false}" != "true" ]] && [[ ${#ANOMALY_CURRENT_PROFILE[@]} -gt 0 ]]; then
+    mkdir -p "${ANOMALY_PROFILE_DIR:-$HOME/.config/port-watcher}" 2>/dev/null || true
+    echo "{" > "${ANOMALY_PROFILE_FILE:-${ANOMALY_PROFILE_DIR:-$HOME/.config/port-watcher}/anomaly-profile.json}"
     local first=true
     for key in "${!ANOMALY_CURRENT_PROFILE[@]}"; do
       local entry="${ANOMALY_CURRENT_PROFILE[$key]}"
