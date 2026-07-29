@@ -24,7 +24,7 @@
 #    • 🆕 SQLite historical database with trend/history/timeline queries
 # ═══════════════════════════════════════════════════════════════════════════════
 
-set -o errexit
+# set -o errexit   # Intentionally disabled: plugins and variable tools may fail gracefully
 set -o pipefail
 set -o nounset
 IFS=$'\n\t'
@@ -97,6 +97,7 @@ ALERT_HIGH_SCORE=15
 
 # ─── GLOBALS ───
 NO_COLOR=false
+PLUGINS_LOADED=()   # Ensure always declared (even if loader.sh fails)
 OUTPUT_MODE="table"
 FILTER_RISK=""
 FILTER_PORT=""
@@ -488,6 +489,35 @@ load_config() {
       TIMESTAMP)              TIMESTAMP="$value";;
       ALERT_CRITICAL_SCORE)   ALERT_CRITICAL_SCORE="$value";;
       ALERT_HIGH_SCORE)       ALERT_HIGH_SCORE="$value";;
+
+      # ─── AI & API Key Config ───
+      AI_ANALYSIS_ENABLED)    AI_ANALYSIS_ENABLED="$value";;
+      AI_PROVIDER)            AI_PROVIDER="$value";;
+      AI_MODEL)               AI_MODEL="$value";;
+      AI_TEMPERATURE)         AI_TEMPERATURE="$value";;
+      AI_MAX_TOKENS)          AI_MAX_TOKENS="$value";;
+      AI_ANALYSIS_MODE)       AI_ANALYSIS_MODE="$value";;
+      AI_CACHE_TTL)           AI_CACHE_TTL="$value";;
+      AI_FIX_ENABLED)         AI_FIX_ENABLED="$value";;
+      AI_FIX_LEVEL)           AI_FIX_LEVEL="$value";;
+      AI_FIX_CONFIRM)         AI_FIX_CONFIRM="$value";;
+      GROQ_API_KEY)           GROQ_API_KEY="$value";;
+      OPENROUTER_API_KEY)     OPENROUTER_API_KEY="$value";;
+      NVIDIA_API_KEY)         NVIDIA_API_KEY="$value";;
+      OPENAI_API_KEY)         OPENAI_API_KEY="$value";;
+      GEMINI_API_KEY)         GEMINI_API_KEY="$value";;
+
+      # ─── Plugin Config ───
+      IPS_ENABLED)            IPS_ENABLED="$value";;
+      IPS_LEVEL)              IPS_LEVEL="$value";;
+      ANOMALY_ENABLED)        ANOMALY_ENABLED="$value";;
+      DASHBOARD_ENABLED)      DASHBOARD_ENABLED="$value";;
+      DASHBOARD_PORT)         DASHBOARD_PORT="$value";;
+      METRICS_ENABLED)        METRICS_ENABLED="$value";;
+      THREAT_INTEL_ENABLED)   THREAT_INTEL_ENABLED="$value";;
+      PROFILE_ENABLED)        PROFILE_ENABLED="$value";;
+      TOPOLOGY_ENABLED)       TOPOLOGY_ENABLED="$value";;
+      DB_PATH)                DB_PATH="$value";;
     esac
   done < "$config_file"
 }
@@ -585,7 +615,7 @@ collect_ports() {
         fi
       fi
       data+=("${process:-unknown}|${pid:-0}|${user:-unknown}|${proto}|$bind_addr|$port")
-    done < <(ss -tuln 2>/dev/null | awk 'NR>1{print $1, $4}' || true)
+    done < <(ss -tuln 2>/dev/null | awk 'NR>1{print $1, $5}' || true)
   fi
 
   printf '%s\n' "${data[@]}"
@@ -743,8 +773,7 @@ output_table() {
       sep_border+="┤"
 
       printf "%s\n" "$(cecho "$C_BOLD" "$top_border")"
-      printf "%-s│ %s │ %s │ %-16s │ %-12s │ %-8s" \
-        "$(cecho "$C_BOLD" "│")" \
+      printf "│ %s │ %s │ %-8s │ %-16s │ %-10s │ %-6s" \
         "$(cecho "$C_BOLD_YELLOW" "PORT")" \
         "$(cecho "$C_BOLD_YELLOW" "PID")" \
         "$(cecho "$C_BOLD_YELLOW" "USER")" \
@@ -820,8 +849,13 @@ output_table() {
     fi
 
     if [[ "$TABLE_STYLE" == "unicode" ]]; then
-      printf "│ %-5s │ %-4s │ %-8s │ %-16s │ %-10s │ %s%-6s${C_RESET}" \
-        "$port" "$pid" "$user" "$process" "$bind_addr" "$color" "$risk"
+      if [[ "$COLOR" == true ]]; then
+        printf "│ %-5s │ %-4s │ %-8s │ %-16s │ %-10s │ %s%-6s${C_RESET}" \
+          "$port" "$pid" "$user" "$process" "$bind_addr" "$color" "$risk"
+      else
+        printf "│ %-5s │ %-4s │ %-8s │ %-16s │ %-10s │ %-6s" \
+          "$port" "$pid" "$user" "$process" "$bind_addr" "$risk"
+      fi
       $has_attack && printf " │ %-7s" "$mitre_display"
       $has_anomaly && printf " │ %-9s" "$anomaly_display"
       printf " │\n"
