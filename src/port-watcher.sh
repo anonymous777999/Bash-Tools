@@ -122,6 +122,8 @@ SHOW_ANOMALIES=false
 SHOW_SCORE=false
 CLI_AUTO_RESPONSE=false
 CLI_IPS_LEVEL=""
+CLI_DASHBOARD=false
+CLI_DASHBOARD_PORT=""
 
 # ─── SQLITE DATABASE GLOBALS ───
 DB_PATH="$HOME/.config/port-watcher/history.db"
@@ -163,6 +165,8 @@ ${C_BOLD}Options:${C_RESET}
       --score              Show Attack Surface Score report (A-F grade)
       --auto-response      Enable automated IPS response (block CRITICAL ports)
       --auto-response-level <level>  Auto-response threshold: CRITICAL, HIGH, ALL (default: CRITICAL)
+      --dashboard           Start embedded web dashboard server (port 9090)
+      --dashboard-port <p>  Dashboard port (default: 9090)
       --version            Show version information
   -h, --help               Show this help message
 
@@ -184,6 +188,8 @@ ${C_BOLD}Examples:${C_RESET}
   ${SCRIPT_NAME} --anomalies                  # Anomaly detection report
   ${SCRIPT_NAME} --score                      # Attack Surface Score report
   ${SCRIPT_NAME} --auto-response              # Auto-block CRITICAL ports
+  ${SCRIPT_NAME} --dashboard                  # Start web dashboard on port 9090
+  ${SCRIPT_NAME} --dashboard-port 8080        # Start dashboard on custom port
   ${SCRIPT_NAME} --syslog                     # Log to syslog
 
 ${C_BOLD}Risk Levels:${C_RESET}
@@ -206,6 +212,8 @@ ${C_BOLD}Plugins:${C_RESET}
   --score                  Show Attack Surface Score (A–F grade with remediations)
   --auto-response          Enable automated IPS response (iptables block of CRITICAL ports)
   --auto-response-level    Set auto-response threshold: CRITICAL, HIGH, or ALL
+  --dashboard              Start embedded web dashboard server (http://127.0.0.1:9090)
+  --dashboard-port <port>  Custom dashboard port (default: 9090)
 
 ${C_BOLD}Configuration:${C_RESET}
   ~/.config/port-watcher/ports.conf           User config
@@ -302,6 +310,14 @@ parse_args() {
         shift
         CLI_IPS_LEVEL="${1^^}"
         CLI_AUTO_RESPONSE=true
+        ;;
+      --dashboard)
+        CLI_DASHBOARD=true
+        ;;
+      --dashboard-port)
+        shift
+        CLI_DASHBOARD_PORT="$1"
+        CLI_DASHBOARD=true
         ;;
       --version)
         echo "Port Watcher v${VERSION}"
