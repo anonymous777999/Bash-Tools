@@ -291,11 +291,23 @@ run_anomaly_detection() {
   # Update profile with current scan data
   while IFS='|' read -r process pid user proto bind_addr port; do
     [[ -z "$port" ]] && continue
-    local bind_type risk_info score risk
-    bind_type="$(classify_bind "$bind_addr" 2>/dev/null || echo "UNKNOWN")"
-    risk_info="$(classify_port_risk "$port" 2>/dev/null || echo "UNKNOWN|3")"
-    score="$(calculate_score "$port" "$user" "$bind_type" "" 2>/dev/null || echo "0")"
-    risk="$(score_to_risk "$score" 2>/dev/null || echo "UNKNOWN")"
+    local bind_type="ALL" risk="LOW" score="3"
+    case "$bind_addr" in
+      127.*|"localhost"|"::1") bind_type="LOCAL" ;;
+      10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*|192.168.*) bind_type="LAN" ;;
+      [fF][eE]80:*) bind_type="LAN" ;; 0.0.0.0|"::"|"*"|"") bind_type="ALL" ;;
+      *) bind_type="UNKNOWN" ;;
+    esac
+    case "$port" in
+      21|22|23|445|3306|3389|5432|6379|27017|1433|1521|5900|5901|4444|6666|6667|6668|6669|2375|2376|6443|10250|10255|9200|9300|11211|27018|27019|1434|1522|9042|9160) score=8; risk="CRITICAL" ;;
+      80|443|8080|8443|25|587|993|110|143|465|389|636|161|162|137|138|139|135|502|102|20000|44818|2222|4840) score=6; risk="HIGH" ;;
+      53|67|68|69|123|514|179|546|547|548|554|873|2049|111|177|427|631|3283|5353|8612|1124|1900|4500) score=4; risk="MEDIUM" ;;
+      *) score=3; risk="LOW" ;;
+    esac
+    [[ "$bind_type" == "ALL" ]] && score=$((score * 2))
+    [[ "$bind_type" == "UNKNOWN" ]] && score=$((score + 1))
+    [[ "$risk" == "CRITICAL" && "$bind_type" == "ALL" ]] && risk="CRITICAL"
+    [[ "$risk" == "CRITICAL" && "$bind_type" == "LOCAL" ]] && risk="MEDIUM"
     save_to_anomaly_profile "$port" "${process##*/}" "$user" "$bind_addr" "$risk" "$score"
   done <<< "$port_data"
 
