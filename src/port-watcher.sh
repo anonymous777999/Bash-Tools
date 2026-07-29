@@ -150,7 +150,9 @@ DB_AVAILABLE=false
 
 # Print usage information
 usage() {
-  cat <<EOF
+  # Capture the full help text into a variable so we can optionally strip ANSI codes
+  local help_text
+  help_text=$(cat <<'USAGEHELP'
 ${C_BOLD}Port Watcher v${VERSION}${C_RESET} — Advanced Security Port Risk Analyzer
 ${C_DIM}Author: RedVortex${C_RESET}
 
@@ -266,7 +268,15 @@ ${C_BOLD}Configuration:${C_RESET}
   /etc/port-watcher/ports.conf                System config
   ~/.config/port-watcher/plugins/enabled/     User plugins
   /etc/port-watcher/plugins/enabled/          System plugins
-EOF
+USAGEHELP
+)
+
+  # Expand variables in help text, optionally strip ANSI codes
+  if $COLOR; then
+    eval "echo -e \"$help_text\""
+  else
+    eval "echo -e \"$help_text\"" | sed $'s/\e\[[0-9;]*m//g'
+  fi
 }
 
 # Parse command-line arguments

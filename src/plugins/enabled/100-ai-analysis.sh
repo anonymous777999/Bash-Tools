@@ -553,19 +553,19 @@ run_ai_analysis() {
 
   # Check if analysis is enabled
   if [[ "$AI_ANALYSIS_ENABLED" != "true" ]]; then
-    cecho "$C_DIM" "  AI Analysis disabled (set AI_ANALYSIS_ENABLED=true in config)"
+    cecho "$C_DIM" "  AI Analysis disabled (set AI_ANALYSIS_ENABLED=true in config)" >&2
     return 0
   fi
 
   # Check curl availability
   if ! command -v curl &>/dev/null; then
-    cecho "$C_BOLD_YELLOW" "  ⚠️  curl not found — AI analysis requires curl"
+    cecho "$C_BOLD_YELLOW" "  ⚠️  curl not found — AI analysis requires curl" >&2
     return 0
   fi
 
   # Check python availability (for JSON processing)
   if ! command -v python3 &>/dev/null; then
-    cecho "$C_BOLD_YELLOW" "  ⚠️  python3 not found — AI analysis requires python3"
+    cecho "$C_BOLD_YELLOW" "  ⚠️  python3 not found — AI analysis requires python3" >&2
     return 0
   fi
 
@@ -574,17 +574,15 @@ run_ai_analysis() {
   data_hash="$(_compute_data_hash "$port_data")"
   if _check_cache "$data_hash"; then
     local age=$(( $(date +%s) - AI_ANALYSIS_TIMESTAMP ))
-    echo ""
-    cecho "$C_DIM" "  [AI Analysis] Using cached result (${age}s old)"
-    echo ""
+    cecho "$C_DIM" "  [AI Analysis] Using cached result (${age}s old)" >&2
+    echo "" >&2
     echo "$AI_ANALYSIS_RESULT"
     return 0
   fi
 
   # Check if there's data to analyze
   if [[ -z "$port_data" ]]; then
-    echo ""
-    cecho "$C_BOLD_YELLOW" "  No port data to analyze."
+    cecho "$C_BOLD_YELLOW" "  No port data to analyze." >&2
     return 0
   fi
 
@@ -593,29 +591,28 @@ run_ai_analysis() {
   chain=($(_build_fallback_chain))
 
   if [[ ${#chain[@]} -eq 0 ]]; then
-    echo ""
-    cecho "$C_BOLD_YELLOW" "  ╔═══════════════════════════════════════════════════════════════╗"
-    cecho "$C_BOLD_YELLOW" "  ║  🤖 AI Analysis: No API Keys Configured                       ║"
-    cecho "$C_BOLD_YELLOW" "  ╚═══════════════════════════════════════════════════════════════╝"
-    echo ""
-    echo "  To enable AI-powered analysis, set at least one API key in ports.conf:"
-    echo ""
-    echo "    # Recommended (free tier):"
-    echo "    GROQ_API_KEY=gsk_your_key_here"
-    echo "    AI_PROVIDER=groq"
-    echo ""
-    echo "    # Or with OpenRouter:"
-    echo "    OPENROUTER_API_KEY=sk-or-your-key-here"
-    echo "    AI_PROVIDER=openrouter"
-    echo ""
-    echo "    # Or with NVIDIA NIM (free):"
-    echo "    NVIDIA_API_KEY=nvapi-your-key-here"
-    echo "    AI_PROVIDER=nvidia"
-    echo ""
-    echo "    # Or with Google Gemini (free):"
-    echo "    GEMINI_API_KEY=AIza_your_key_here"
-    echo "    AI_PROVIDER=gemini"
-    echo ""
+    cecho "$C_BOLD_YELLOW" "  ╔═══════════════════════════════════════════════════════════════╗" >&2
+    cecho "$C_BOLD_YELLOW" "  ║  🤖 AI Analysis: No API Keys Configured                       ║" >&2
+    cecho "$C_BOLD_YELLOW" "  ╚═══════════════════════════════════════════════════════════════╝" >&2
+    echo "" >&2
+    echo "  To enable AI-powered analysis, set at least one API key in ports.conf:" >&2
+    echo "" >&2
+    echo "    # Recommended (free tier):" >&2
+    echo "    GROQ_API_KEY=gsk_your_key_here" >&2
+    echo "    AI_PROVIDER=groq" >&2
+    echo "" >&2
+    echo "    # Or with OpenRouter:" >&2
+    echo "    OPENROUTER_API_KEY=sk-or-your-key-here" >&2
+    echo "    AI_PROVIDER=openrouter" >&2
+    echo "" >&2
+    echo "    # Or with NVIDIA NIM (free):" >&2
+    echo "    NVIDIA_API_KEY=nvapi-your-key-here" >&2
+    echo "    AI_PROVIDER=nvidia" >&2
+    echo "" >&2
+    echo "    # Or with Google Gemini (free):" >&2
+    echo "    GEMINI_API_KEY=AIza_your_key_here" >&2
+    echo "    AI_PROVIDER=gemini" >&2
+    echo "" >&2
     return 0
   fi
 
@@ -644,18 +641,18 @@ run_ai_analysis() {
     fi
   done
 
-  # Show header
+  # Show header (to stderr — only AI response on stdout)
   local mode_display="${mode^^}"
   [[ "$mode" == "auto-fix" ]] && mode_display="AUTO-FIX"
-  echo ""
-  cecho "$C_BOLD_CYAN" "  ╔═══════════════════════════════════════════════════════════════╗"
-  cecho "$C_BOLD_CYAN" "  ║  🤖 AI Security Analysis  [${mode_display}]                              ║"
-  cecho "$C_BOLD_CYAN" "  ╚═══════════════════════════════════════════════════════════════╝"
+  echo "" >&2
+  cecho "$C_BOLD_CYAN" "  ╔═══════════════════════════════════════════════════════════════╗" >&2
+  cecho "$C_BOLD_CYAN" "  ║  🤖 AI Security Analysis  [${mode_display}]                              ║" >&2
+  cecho "$C_BOLD_CYAN" "  ╚═══════════════════════════════════════════════════════════════╝" >&2
   if ! $configured_in_chain && [[ ${#chain[@]} -gt 1 ]]; then
-    cecho "$C_DIM" "     Note: Configured provider '$AI_PROVIDER' has no key, using first available"
+    cecho "$C_DIM" "     Note: Configured provider '$AI_PROVIDER' has no key, using first available" >&2
   fi
-  cecho "$C_DIM" "     Available providers in fallback chain: ${chain[*]}"
-  echo ""
+  cecho "$C_DIM" "     Available providers in fallback chain: ${chain[*]}" >&2
+  echo "" >&2
 
   # Try providers in order until one succeeds
   # Start from start_idx, wrap around through the rest
@@ -680,41 +677,36 @@ run_ai_analysis() {
     tried+=("$provider")
 
     local model="$(_get_model "$provider")"
-    cecho "$C_DIM" "  [AI] Trying provider ${attempts}/${total}: $provider ($model)..."
+    cecho "$C_DIM" "  [AI] Trying provider ${attempts}/${total}: $provider ($model)..." >&2
 
     _call_provider "$provider" "$model" "$system_prompt" "$user_prompt"
     if [[ $? -eq 0 ]]; then
       succeeded=true
-      echo ""
       if [[ $attempts -gt 1 ]]; then
-        cecho "$C_GREEN" "  ✓ Succeeded with fallback provider: $provider"
-        echo ""
+        cecho "$C_GREEN" "  ✓ Succeeded with fallback provider: $provider" >&2
       fi
       # Save to cache
       _save_cache "$data_hash" "$_PROVIDER_RESPONSE"
-      # Print the result
+      # Print the result (ONLY this goes to stdout)
       echo "$_PROVIDER_RESPONSE"
-      echo ""
       break
     else
       local err_msg="${_PROVIDER_ERROR:0:80}"
-      cecho "$C_BOLD_YELLOW" "  ⚠️  $provider failed: ${err_msg}"
+      cecho "$C_BOLD_YELLOW" "  ⚠️  $provider failed: ${err_msg}" >&2
       if [[ $attempts -lt $total ]]; then
-        cecho "$C_DIM" "     → Trying next provider..."
-        echo ""
+        cecho "$C_DIM" "     → Trying next provider..." >&2
       fi
     fi
   done
 
   if ! $succeeded; then
-    echo ""
-    cecho "$C_BOLD_RED" "  ╔═══════════════════════════════════════════════════════════════╗"
-    cecho "$C_BOLD_RED" "  ║  ✗ All providers failed — no analysis could be completed       ║"
-    cecho "$C_BOLD_RED" "  ╚═══════════════════════════════════════════════════════════════╝"
-    echo ""
-    cecho "$C_DIM" "  Tried providers: ${tried[*]}"
-    echo ""
-    cecho "$C_DIM" "  Last error saved to: /tmp/port-watcher-ai-error.json"
+    echo "" >&2
+    cecho "$C_BOLD_RED" "  ╔═══════════════════════════════════════════════════════════════╗" >&2
+    cecho "$C_BOLD_RED" "  ║  ✗ All providers failed — no analysis could be completed       ║" >&2
+    cecho "$C_BOLD_RED" "  ╚═══════════════════════════════════════════════════════════════╝" >&2
+    echo "" >&2
+    cecho "$C_DIM" "  Tried providers: ${tried[*]}" >&2
+    cecho "$C_DIM" "  Last error saved to: /tmp/port-watcher-ai-error.json" >&2
     if [[ -n "$_PROVIDER_RESPONSE" ]]; then
       echo "$_PROVIDER_RESPONSE" > /tmp/port-watcher-ai-error.json 2>/dev/null || true
     fi
