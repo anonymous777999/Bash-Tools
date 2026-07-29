@@ -13,13 +13,13 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Database Path ───
-DB_DIR="$HOME/.config/port-watcher"
-DB_PATH="${DB_DIR}/history.db"
-CLI_DB_COMMAND=""      # Set by --db flag
-CLI_HISTORY=""
-CLI_TREND=""
-CLI_TIMELINE=false
-DB_AVAILABLE=false
+declare -g DB_DIR="$HOME/.config/port-watcher"
+declare -g DB_PATH="${DB_DIR}/history.db"
+declare -g CLI_DB_COMMAND=""      # Set by --db flag
+declare -g CLI_HISTORY=""
+declare -g CLI_TREND=""
+declare -g CLI_TIMELINE=false
+declare -g DB_AVAILABLE=false
 
 # ─── Check Dependencies ───
 plugin_init_database-sqlite() {

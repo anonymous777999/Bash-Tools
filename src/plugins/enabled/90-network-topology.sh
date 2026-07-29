@@ -26,17 +26,17 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Config ───
-TOPOLOGY_SUBNET="${TOPOLOGY_SUBNET:-}"           # Auto-detect if empty
-TOPOLOGY_SCAN_TIMEOUT="${TOPOLOGY_SCAN_TIMEOUT:-5}"  # Seconds per scan
-TOPOLOGY_MAX_HOSTS="${TOPOLOGY_MAX_HOSTS:-50}"       # Max hosts to display
+declare -g TOPOLOGY_SUBNET="${TOPOLOGY_SUBNET:-}"           # Auto-detect if empty
+declare -g TOPOLOGY_SCAN_TIMEOUT="${TOPOLOGY_SCAN_TIMEOUT:-5}"  # Seconds per scan
+declare -g TOPOLOGY_MAX_HOSTS="${TOPOLOGY_MAX_HOSTS:-50}"       # Max hosts to display
 
 # ─── CLI Flag ───
-SHOW_TOPOLOGY=false
+declare -g SHOW_TOPOLOGY=false
 
 # ─── Runtime Data ───
 declare -g -A TOPOLOGY_HOSTS        # ip → "hostname|mac|vendor|reachable"
 declare -g -A TOPOLOGY_SERVICES     # ip → "service1,service2,..."
-TOPOLOGY_DISCOVERY_METHOD=""
+declare -g TOPOLOGY_DISCOVERY_METHOD=""
 
 
 # ─── Plugin Init ───

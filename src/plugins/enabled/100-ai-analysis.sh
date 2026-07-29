@@ -29,29 +29,29 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Config (overridable via ports.conf) ───
-AI_ANALYSIS_ENABLED="${AI_ANALYSIS_ENABLED:-true}"
-AI_PROVIDER="${AI_PROVIDER:-openrouter}"
-AI_MODEL="${AI_MODEL:-auto}"
-AI_TEMPERATURE="${AI_TEMPERATURE:-0.3}"
-AI_MAX_TOKENS="${AI_MAX_TOKENS:-2048}"
-AI_CACHE_TTL="${AI_CACHE_TTL:-300}"  # seconds before re-analysis
-AI_ANALYSIS_MODE="${AI_ANALYSIS_MODE:-briefing}"  # briefing|remediation|attack|full|auto-fix
+declare -g AI_ANALYSIS_ENABLED="${AI_ANALYSIS_ENABLED:-true}"
+declare -g AI_PROVIDER="${AI_PROVIDER:-openrouter}"
+declare -g AI_MODEL="${AI_MODEL:-auto}"
+declare -g AI_TEMPERATURE="${AI_TEMPERATURE:-0.3}"
+declare -g AI_MAX_TOKENS="${AI_MAX_TOKENS:-2048}"
+declare -g AI_CACHE_TTL="${AI_CACHE_TTL:-300}"  # seconds before re-analysis
+declare -g AI_ANALYSIS_MODE="${AI_ANALYSIS_MODE:-briefing}"  # briefing|remediation|attack|full|auto-fix
 
 # ─── Auto-Fix Config ───
-AI_FIX_ENABLED="${AI_FIX_ENABLED:-false}"
-AI_FIX_LEVEL="${AI_FIX_LEVEL:-CRITICAL}"  # CRITICAL|HIGH|ALL — minimum risk level to auto-fix
-AI_FIX_LOG_DIR="$HOME/.config/port-watcher/ai-fix-logs"
-AI_FIX_CONFIRM="${AI_FIX_CONFIRM:-prompt}"  # prompt|yes|dry-run
-AI_FIX_ACTIONS_TAKEN=0
-AI_FIX_ACTIONS_FAILED=0
-AI_FIX_UNDO_FILE="/tmp/port-watcher-ai-undo.txt"
+declare -g AI_FIX_ENABLED="${AI_FIX_ENABLED:-false}"
+declare -g AI_FIX_LEVEL="${AI_FIX_LEVEL:-CRITICAL}"  # CRITICAL|HIGH|ALL — minimum risk level to auto-fix
+declare -g AI_FIX_LOG_DIR="$HOME/.config/port-watcher/ai-fix-logs"
+declare -g AI_FIX_CONFIRM="${AI_FIX_CONFIRM:-prompt}"  # prompt|yes|dry-run
+declare -g AI_FIX_ACTIONS_TAKEN=0
+declare -g AI_FIX_ACTIONS_FAILED=0
+declare -g AI_FIX_UNDO_FILE="/tmp/port-watcher-ai-undo.txt"
 
 # API Keys (loaded from config or env)
-OPENAI_API_KEY="${OPENAI_API_KEY:-}"
-OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
-NVIDIA_API_KEY="${NVIDIA_API_KEY:-}"
-GROQ_API_KEY="${GROQ_API_KEY:-}"
-GEMINI_API_KEY="${GEMINI_API_KEY:-}"
+declare -g OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+declare -g OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
+declare -g NVIDIA_API_KEY="${NVIDIA_API_KEY:-}"
+declare -g GROQ_API_KEY="${GROQ_API_KEY:-}"
+declare -g GEMINI_API_KEY="${GEMINI_API_KEY:-}"
 
 # ─── Provider Endpoints ───
 declare -g -A AI_ENDPOINTS=(
@@ -62,7 +62,7 @@ declare -g -A AI_ENDPOINTS=(
 )
 
 # Gemini uses a different API format
-GEMINI_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/models"
+declare -g GEMINI_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/models"
 
 # ─── Provider Default Models ───
 declare -g -A AI_DEFAULT_MODELS=(
@@ -83,15 +83,15 @@ declare -g -A AI_API_KEY_VARS=(
 )
 
 # ─── State ───
-AI_ANALYSIS_RESULT=""
-AI_ANALYSIS_TIMESTAMP=0
-AI_LAST_HASH=""
-AI_CACHE_FILE="/tmp/port-watcher-ai-cache.txt"
-_PROVIDER_RESPONSE=""
-_PROVIDER_ERROR=""
+declare -g AI_ANALYSIS_RESULT=""
+declare -g AI_ANALYSIS_TIMESTAMP=0
+declare -g AI_LAST_HASH=""
+declare -g AI_CACHE_FILE="/tmp/port-watcher-ai-cache.txt"
+declare -g _PROVIDER_RESPONSE=""
+declare -g _PROVIDER_ERROR=""
 
 # ─── Fallback Chain (priority order: cheapest/most generous free tier first) ───
-AI_FALLBACK_CHAIN=("groq" "openrouter" "nvidia" "gemini" "openai")
+declare -g -a AI_FALLBACK_CHAIN=("groq" "openrouter" "nvidia" "gemini" "openai")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -937,7 +937,7 @@ _prompt_for_fix() {
 }
 
 # Global batch mode flag
-AI_FIX_BATCH_MODE=false
+declare -g AI_FIX_BATCH_MODE=false
 
 # ─── Undo ───
 

@@ -30,28 +30,28 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Config (from ports.conf) ───
-SHODAN_API_KEY="${SHODAN_API_KEY:-}"
-ABUSEIPDB_API_KEY="${ABUSEIPDB_API_KEY:-}"
-OTX_API_KEY="${OTX_API_KEY:-}"
-CENSYS_API_ID="${CENSYS_API_ID:-}"
-CENSYS_SECRET="${CENSYS_SECRET:-}"
-THREAT_INTEL_ENABLED="${THREAT_INTEL_ENABLED:-false}"
-THREAT_CACHE_DIR="${THREAT_CACHE_DIR:-$HOME/.config/port-watcher/threat-cache}"
-THREAT_CACHE_TTL="${THREAT_CACHE_TTL:-86400}"  # 24 hours
+declare -g SHODAN_API_KEY="${SHODAN_API_KEY:-}"
+declare -g ABUSEIPDB_API_KEY="${ABUSEIPDB_API_KEY:-}"
+declare -g OTX_API_KEY="${OTX_API_KEY:-}"
+declare -g CENSYS_API_ID="${CENSYS_API_ID:-}"
+declare -g CENSYS_SECRET="${CENSYS_SECRET:-}"
+declare -g THREAT_INTEL_ENABLED="${THREAT_INTEL_ENABLED:-false}"
+declare -g THREAT_CACHE_DIR="${THREAT_CACHE_DIR:-$HOME/.config/port-watcher/threat-cache}"
+declare -g THREAT_CACHE_TTL="${THREAT_CACHE_TTL:-86400}"  # 24 hours
 
 # ─── CLI Flags ───
-SHOW_THREAT_INTEL=false
+declare -g SHOW_THREAT_INTEL=false
 
 # ─── Runtime Data ───
 declare -g -A THREAT_FINDINGS            # "port|ip|service" → "source|score|detail"
-THREAT_INTEL_COUNT=0
-THREAT_INTEL_ALERTS=0
+declare -g THREAT_INTEL_COUNT=0
+declare -g THREAT_INTEL_ALERTS=0
 
 # ─── Built-in Threat Feeds (C2 servers, known bad, anonymizers) ───
 # These are checked locally first before hitting external APIs.
 # Format: IP:port:description
 declare -a BUILTIN_THREAT_IPS=()
-BUILTIN_THREAT_IPS_LOADED=false
+declare -g BUILTIN_THREAT_IPS_LOADED=false
 
 load_builtin_threat_feeds() {
   $BUILTIN_THREAT_IPS_LOADED && return

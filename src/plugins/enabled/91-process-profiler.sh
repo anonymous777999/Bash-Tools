@@ -35,24 +35,24 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Config ───
-PROFILE_DIR="$HOME/.config/port-watcher"
-PROFILE_FILE="${PROFILE_DIR}/process-profiles.json"
-PROFILE_CPU_THRESHOLD="${PROFILE_CPU_THRESHOLD:-80}"       # %
-PROFILE_MEM_THRESHOLD="${PROFILE_MEM_THRESHOLD:-50}"       # %
-PROFILE_FD_THRESHOLD="${PROFILE_FD_THRESHOLD:-500}"        # File descriptors
-PROFILE_THREAD_THRESHOLD="${PROFILE_THREAD_THRESHOLD:-100}" # Threads
-PROFILE_AGE_THRESHOLD="${PROFILE_AGE_THRESHOLD:-60}"        # Seconds (recently started)
+declare -g PROFILE_DIR="$HOME/.config/port-watcher"
+declare -g PROFILE_FILE="${PROFILE_DIR}/process-profiles.json"
+declare -g PROFILE_CPU_THRESHOLD="${PROFILE_CPU_THRESHOLD:-80}"       # %
+declare -g PROFILE_MEM_THRESHOLD="${PROFILE_MEM_THRESHOLD:-50}"       # %
+declare -g PROFILE_FD_THRESHOLD="${PROFILE_FD_THRESHOLD:-500}"        # File descriptors
+declare -g PROFILE_THREAD_THRESHOLD="${PROFILE_THREAD_THRESHOLD:-100}" # Threads
+declare -g PROFILE_AGE_THRESHOLD="${PROFILE_AGE_THRESHOLD:-60}"        # Seconds (recently started)
 
 # ─── CLI Flags ───
-SHOW_PROFILE=false
-PROFILE_SNAPSHOT=false
+declare -g SHOW_PROFILE=false
+declare -g PROFILE_SNAPSHOT=false
 
 # ─── Runtime Data ───
 declare -g -A PROCESS_PROFILES         # binary_path → sha256_hash (from profile file)
 declare -g -A PROCESS_BEHAVIOR         # pid → "metric|value|flag|detail"
-PROCESS_BEHAVIOR_REPORT=""
-PROCESS_BEHAVIOR_COUNT=0
-PROCESS_BEHAVIOR_ALERTS=0
+declare -g PROCESS_BEHAVIOR_REPORT=""
+declare -g PROCESS_BEHAVIOR_COUNT=0
+declare -g PROCESS_BEHAVIOR_ALERTS=0
 
 # ─── Plugin Init ───
 plugin_init_process-profiler() {

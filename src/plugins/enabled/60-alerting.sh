@@ -20,12 +20,12 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Config (overridable via ports.conf) ───
-ALERT_ENABLED="${ALERT_ENABLED:-true}"
-ALERT_LEVEL="${ALERT_LEVEL:-HIGH}"
-SLACK_WEBHOOK="${SLACK_WEBHOOK_URL:-}"
-DISCORD_WEBHOOK="${DISCORD_WEBHOOK_URL:-}"
-ALERT_EMAIL_TO="${ALERT_EMAIL_TO:-}"
-ALERTS_SENT=0
+declare -g ALERT_ENABLED="${ALERT_ENABLED:-true}"
+declare -g ALERT_LEVEL="${ALERT_LEVEL:-HIGH}"
+declare -g SLACK_WEBHOOK="${SLACK_WEBHOOK_URL:-}"
+declare -g DISCORD_WEBHOOK="${DISCORD_WEBHOOK_URL:-}"
+declare -g ALERT_EMAIL_TO="${ALERT_EMAIL_TO:-}"
+declare -g ALERTS_SENT=0
 
 # ─── Plugin Init ───
 plugin_init_alerting() {

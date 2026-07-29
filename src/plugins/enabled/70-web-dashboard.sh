@@ -37,19 +37,19 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Config ───
-DASHBOARD_PORT="${DASHBOARD_PORT:-9090}"
-DASHBOARD_HOST="${DASHBOARD_HOST:-127.0.0.1}"
-DASHBOARD_REFRESH_SECONDS="${DASHBOARD_REFRESH_SECONDS:-5}"
+declare -g DASHBOARD_PORT="${DASHBOARD_PORT:-9090}"
+declare -g DASHBOARD_HOST="${DASHBOARD_HOST:-127.0.0.1}"
+declare -g DASHBOARD_REFRESH_SECONDS="${DASHBOARD_REFRESH_SECONDS:-5}"
 
 # ─── Temp files ───
-DASH_HTML_FILE="/tmp/port-watcher-dashboard.html"
-DASH_JSON_FILE="/tmp/port-watcher-scan.json"
-DASH_METRICS_FILE="${DASH_METRICS_FILE:-/tmp/port-watcher-metrics.prom}"
-DASH_SERVER_SCRIPT="/tmp/port-watcher-server.sh"
+declare -g DASH_HTML_FILE="/tmp/port-watcher-dashboard.html"
+declare -g DASH_JSON_FILE="/tmp/port-watcher-scan.json"
+declare -g DASH_METRICS_FILE="${DASH_METRICS_FILE:-/tmp/port-watcher-metrics.prom}"
+declare -g DASH_SERVER_SCRIPT="/tmp/port-watcher-server.sh"
 
 # ─── CLI Flags (set from port-watcher.sh) ───
-CLI_DASHBOARD=false
-CLI_DASHBOARD_PORT=""
+declare -g CLI_DASHBOARD=false
+declare -g CLI_DASHBOARD_PORT=""
 
 # ─── Plugin Init ───
 plugin_init_web-dashboard() {
@@ -94,9 +94,9 @@ write_server_script() {
 #!/bin/sh
 # Port Watcher Dashboard Server — routing script
 # Called by socat/ncat for each HTTP request
-HTML_FILE="/tmp/port-watcher-dashboard.html"
-JSON_FILE="/tmp/port-watcher-scan.json"
-METRICS_FILE="/tmp/port-watcher-metrics.prom"
+declare -g HTML_FILE="/tmp/port-watcher-dashboard.html"
+declare -g JSON_FILE="/tmp/port-watcher-scan.json"
+declare -g METRICS_FILE="/tmp/port-watcher-metrics.prom"
 
 # Read HTTP request line
 read request_line 2>/dev/null || true

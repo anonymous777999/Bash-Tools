@@ -19,18 +19,18 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Config (configurable via ports.conf) ───
-AUTO_RESPONSE=false
-AUTO_RESPONSE_LEVEL="${AUTO_RESPONSE_LEVEL:-CRITICAL}"
-WHITELIST_PORTS="${WHITELIST_PORTS:-22,80,443}"
-WHITELIST_PROCESSES="${WHITELIST_PROCESSES:-sshd,nginx,dockerd,containerd}"
-IPS_LOG_DIR="$HOME/.config/port-watcher/ips-logs"
-IPS_ACTIONS_TAKEN=0
-IPS_LAST_ACTION=""
+declare -g AUTO_RESPONSE=false
+declare -g AUTO_RESPONSE_LEVEL="${AUTO_RESPONSE_LEVEL:-CRITICAL}"
+declare -g WHITELIST_PORTS="${WHITELIST_PORTS:-22,80,443}"
+declare -g WHITELIST_PROCESSES="${WHITELIST_PROCESSES:-sshd,nginx,dockerd,containerd}"
+declare -g IPS_LOG_DIR="$HOME/.config/port-watcher/ips-logs"
+declare -g IPS_ACTIONS_TAKEN=0
+declare -g IPS_LAST_ACTION=""
 
 # ─── CLI Flag ───
-SHOW_AUTO_RESPONSE=false
-CLI_AUTO_RESPONSE=false
-CLI_IPS_LEVEL=""
+declare -g SHOW_AUTO_RESPONSE=false
+declare -g CLI_AUTO_RESPONSE=false
+declare -g CLI_IPS_LEVEL=""
 
 # ─── Plugin Init ───
 plugin_init_ips-response() {
