@@ -409,7 +409,8 @@ show_process_profile_report() {
     # Print each finding
     IFS=';' read -ra findings <<< "$finding"
     for f in "${findings[@]}"; do
-      f="$(echo "$f" | xargs)"
+      # Trim whitespace without xargs (xargs interprets quotes as special chars)
+      f="$(printf '%s' "$f" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
       echo "    ├─ ${color}${f}${C_RESET}"
     done
     echo "    └─ Severity: ${color}${severity}${C_RESET}"

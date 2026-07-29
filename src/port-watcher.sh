@@ -466,12 +466,17 @@ load_config() {
 
   # Parse config file line by line
   while IFS='=' read -r key value; do
-    key="$(echo "$key" | xargs)"
-    value="$(echo "$value" | xargs)"
+    # Trim whitespace (xargs interprets quotes as special chars — use sed instead)
+    key="$(printf '%s' "$key" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    value="$(printf '%s' "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    # Strip inline comments from values (# leaks into ALERT_CRITICAL_SCORE, breaking ((..)) and awk)
+    value="${value%%#*}"
+    # Re-trim trailing whitespace after comment removal
+    value="$(printf '%s' "$value" | sed 's/[[:space:]]*$//')"
     [[ -z "$key" || "$key" =~ ^# ]] && continue
 
     # Strip parentheses and clean the value
-    value="$(echo "$value" | tr -d '()')"
+    value="$(printf '%s' "$value" | tr -d '()')"
 
     case "${key^^}" in
       CRITICAL)       IFS=' ' read -r -a CRITICAL <<< "$(echo "$value" | tr ',' ' ')";;
