@@ -154,7 +154,7 @@ render_html() {
     if declare -f mitre_lookup &>/dev/null; then
       local mr
       mr="$(mitre_lookup "$process" "$port" "$bind_type" "$risk" 2>/dev/null || true)"
-      [[ -n "$mr" ]] && mitre_badge="<span class=\"badge-mitre\">$(echo "$mr" | cut -d: -f1)</span>"
+      [[ -n "$mr" ]] && mitre_badge="<span class=\"bm\">$(echo "$mr" | cut -d: -f1)</span>"
     fi
 
     local anomaly_badge="" anom_score=0
@@ -162,29 +162,29 @@ render_html() {
       local ae="${ANOMALY_DETECTIONS[$port]:-}"
       if [[ -n "$ae" ]]; then
         anom_score="$(echo "$ae" | cut -d'|' -f1)"
-        local ac="anomaly-info"
-        [[ $anom_score -ge 50 ]] && ac="anomaly-alert"
-        [[ $anom_score -ge 30 && $anom_score -lt 50 ]] && ac="anomaly-warn"
+        local ac="ai"
+        [[ $anom_score -ge 50 ]] && ac="aa"
+        [[ $anom_score -ge 30 && $anom_score -lt 50 ]] && ac="aw"
         anomaly_badge="<span class=\"${ac}\">${anom_score}</span>"
       fi
     fi
 
-    rows+="<tr><td class=\"cell-port\">${port}</td><td>${pid}</td><td class=\"cell-user\">${user}</td><td class=\"cell-process\">${process}</td><td>${bind_addr}</td><td style=\"color:${risk_color};font-weight:600;\">${risk}</td><td>${mitre_badge}</td><td class=\"cell-anomaly\">${anomaly_badge}</td></tr>"
+    rows+="<tr><td class=\"cp\">${port}</td><td>${pid}</td><td class=\"cu\">${user}</td><td >${process}</td><td>${bind_addr}</td><td style=\"color:${risk_color};font-weight:600;\">${risk}</td><td>${mitre_badge}</td><td >${anomaly_badge}</td></tr>"
 
     if [[ $anom_score -gt 0 ]]; then
       local anom_type="$(echo "$ae" | cut -d'|' -f2)"
       local anom_detail="$(echo "$ae" | cut -d'|' -f3-)"
       anom_detail="${anom_detail//\"/\\\"}"
       anomaly_count=$((anomaly_count + 1))
-      [[ $anomaly_count -le 5 ]] && anomaly_rows+="<div class=\"ticker-item ticker-${anom_type,,}\"><span class=\"ticker-port\">${port}</span><span class=\"ticker-type\">[${anom_type}]</span><span class=\"ticker-detail\">${anom_detail}</span><span class=\"ticker-score\">${anom_score}</span></div>"
+      [[ $anomaly_count -le 5 ]] && anomaly_rows+="<div class=\"ti\"><span class=\"tn\">${port}</span><span class=\"ty\">[${anom_type}]</span><span class=\"td\">${anom_detail}</span><span class=\"tsc\">${anom_score}</span></div>"
     fi
   done <<< "$data"
 
   local anomaly_section=""
   if [[ -n "$anomaly_rows" ]]; then
     local more=""
-    [[ $anomaly_count -gt 5 ]] && more="<div class=\"ticker-more\">+$((anomaly_count - 5)) more</div>"
-    anomaly_section="<div class=\"ticker-section\"><div class=\"ticker-header\">Anomalies</div>${anomaly_rows}${more}</div>"
+    [[ $anomaly_count -gt 5 ]] && more="<div class=\"tm\">+$((anomaly_count - 5)) more</div>"
+    anomaly_section="<div class=\"ts\"><div class=\"th\">🚨 Anomalies</div>${anomaly_rows}${more}</div>"
   fi
 
   cat <<HTML
@@ -373,9 +373,10 @@ start_dashboard_server() {
           --sh-exec "$DASH_SERVER_SCRIPT" 2>/dev/null || break
       done &
     elif command -v nc &>/dev/null; then
-      # nc: basic - one connection at a time via the routing script
+      # nc: basic - one connection at a time, serves static HTML only
+      # (no routing: nc's stdin is the pipe, not the HTTP client)
       while true; do
-        "$DASH_SERVER_SCRIPT" | nc -l -p "$DASHBOARD_PORT" -s "$DASHBOARD_HOST" -q 1 2>/dev/null || break
+        { echo "HTTP/1.1 200 OK"; echo "Content-Type: text/html; charset=UTF-8"; echo "Connection: close"; echo ""; cat "$DASH_HTML_FILE" 2>/dev/null; } | nc -l -p "$DASHBOARD_PORT" -s "$DASHBOARD_HOST" -q 1 2>/dev/null || break
       done &
     fi
 
