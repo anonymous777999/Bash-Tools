@@ -1,0 +1,649 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Port Watcher v3 — AI Analysis Engine
+#  ═════════════════════════════════════════════════════════════════════════════
+#  Pipes scan results through LLM APIs for natural-language security briefings,
+#  remediation advice, risk explanations, and attack narrative generation.
+#
+#  Supported providers (all OpenAI-compatible unless noted):
+#    • openai     — GPT-4o / GPT-4o-mini          (needs API key with balance)
+#    • openrouter — Llama 3, Mistral, DeepSeek etc  (free + paid models)
+#    • nvidia     — Llama 3.1 70B, Nemotron etc     (free rate-limited, 40 RPM)
+#    • groq       — Llama 3, Mixtral, Gemma         (free tier, TPM-limited)
+#    • gemini     — Gemini 2.0 Flash / Pro          (different API format)
+#
+#  Config in ports.conf:
+#    AI_ANALYSIS_ENABLED=true
+#    AI_PROVIDER=openrouter
+#    AI_MODEL=auto                    # auto = provider default
+#    AI_TEMPERATURE=0.3
+#    AI_MAX_TOKENS=2048
+#    OPENAI_API_KEY=sk-...            # For OpenAI provider
+#    OPENROUTER_API_KEY=sk-or-...     # For OpenRouter provider
+#    NVIDIA_API_KEY=nvapi-...         # For NVIDIA NIM provider
+#    GROQ_API_KEY=gsk_...             # For Groq provider
+#    GEMINI_API_KEY=AIza...           # For Google Gemini provider
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── Config (overridable via ports.conf) ───
+AI_ANALYSIS_ENABLED="${AI_ANALYSIS_ENABLED:-true}"
+AI_PROVIDER="${AI_PROVIDER:-openrouter}"
+AI_MODEL="${AI_MODEL:-auto}"
+AI_TEMPERATURE="${AI_TEMPERATURE:-0.3}"
+AI_MAX_TOKENS="${AI_MAX_TOKENS:-2048}"
+AI_CACHE_TTL="${AI_CACHE_TTL:-300}"  # seconds before re-analysis
+AI_ANALYSIS_MODE="${AI_ANALYSIS_MODE:-briefing}"  # briefing|remediation|attack|full
+
+# API Keys (loaded from config or env)
+OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
+NVIDIA_API_KEY="${NVIDIA_API_KEY:-}"
+GROQ_API_KEY="${GROQ_API_KEY:-}"
+GEMINI_API_KEY="${GEMINI_API_KEY:-}"
+
+# ─── Provider Endpoints ───
+declare -A AI_ENDPOINTS=(
+  ["openai"]="https://api.openai.com/v1/chat/completions"
+  ["openrouter"]="https://openrouter.ai/api/v1/chat/completions"
+  ["nvidia"]="https://integrate.api.nvidia.com/v1/chat/completions"
+  ["groq"]="https://api.groq.com/openai/v1/chat/completions"
+)
+
+# Gemini uses a different API format
+GEMINI_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/models"
+
+# ─── Provider Default Models ───
+declare -A AI_DEFAULT_MODELS=(
+  ["openai"]="gpt-4o-mini"
+  ["openrouter"]="meta-llama/llama-3.1-8b-instruct"
+  ["nvidia"]="meta/llama-3.1-70b-instruct"
+  ["groq"]="llama-3.3-70b-versatile"
+  ["gemini"]="gemini-2.0-flash"
+)
+
+# ─── Provider API Key Env Vars ───
+declare -A AI_API_KEY_VARS=(
+  ["openai"]="OPENAI_API_KEY"
+  ["openrouter"]="OPENROUTER_API_KEY"
+  ["nvidia"]="NVIDIA_API_KEY"
+  ["groq"]="GROQ_API_KEY"
+  ["gemini"]="GEMINI_API_KEY"
+)
+
+# ─── State ───
+AI_ANALYSIS_RESULT=""
+AI_ANALYSIS_TIMESTAMP=0
+AI_LAST_HASH=""
+AI_CACHE_FILE="/tmp/port-watcher-ai-cache.txt"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PROVIDER-SPECIFIC HELPERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Get the API key for the configured provider
+_get_api_key() {
+  local provider="${1:-$AI_PROVIDER}"
+  local var_name="${AI_API_KEY_VARS[$provider]:-}"
+  [[ -z "$var_name" ]] && { echo ""; return 1; }
+  echo "${!var_name:-}"
+}
+
+# Get the endpoint URL for the configured provider
+_get_endpoint() {
+  local provider="${1:-$AI_PROVIDER}"
+  if [[ "$provider" == "gemini" ]]; then
+    local model="${AI_MODEL:-${AI_DEFAULT_MODELS[$provider]}}"
+    echo "${GEMINI_ENDPOINT}/${model}:generateContent?key=$(_get_api_key "$provider")"
+  else
+    echo "${AI_ENDPOINTS[$provider]:-}"
+  fi
+}
+
+# Get the model name (user-configured or provider default)
+_get_model() {
+  local provider="${1:-$AI_PROVIDER}"
+  if [[ "$AI_MODEL" == "auto" ]]; then
+    echo "${AI_DEFAULT_MODELS[$provider]:-unknown}"
+  else
+    echo "$AI_MODEL"
+  fi
+}
+
+# Check if a provider is available (has API key)
+_is_provider_available() {
+  local provider="${1:-$AI_PROVIDER}"
+  local key
+  key="$(_get_api_key "$provider")"
+  [[ -n "$key" ]]
+}
+
+# Get available providers (those with API keys configured)
+_get_available_providers() {
+  local available=()
+  for provider in openai openrouter nvidia groq gemini; do
+    if _is_provider_available "$provider"; then
+      available+=("$provider")
+    fi
+  done
+  # Fallback to configured provider even if no key (will error gracefully)
+  if [[ ${#available[@]} -eq 0 ]] && [[ -n "$AI_PROVIDER" ]]; then
+    available+=("$AI_PROVIDER")
+  fi
+  echo "${available[@]}"
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  CACHE LOGIC
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Compute a hash of the port data for cache comparison
+_compute_data_hash() {
+  local data="$1"
+  echo "$data" | sha256sum 2>/dev/null | cut -d' ' -f1 || echo "$data" | md5sum 2>/dev/null | cut -d' ' -f1 || echo "nocache"
+}
+
+# Check if we have a valid cached analysis
+_check_cache() {
+  local data_hash="$1"
+  local now
+  now="$(date +%s 2>/dev/null || echo 0)"
+
+  # Cache disabled
+  [[ $AI_CACHE_TTL -le 0 ]] && return 1
+
+  # No cache file
+  [[ ! -f "$AI_CACHE_FILE" ]] && return 1
+
+  local cached_hash cached_time cached_result
+  cached_hash="$(head -1 "$AI_CACHE_FILE" 2>/dev/null || echo "")"
+  cached_time="$(sed -n '2p' "$AI_CACHE_FILE" 2>/dev/null || echo 0)"
+  cached_result="$(tail -n +3 "$AI_CACHE_FILE" 2>/dev/null || echo "")"
+
+  # Hash mismatch
+  [[ "$cached_hash" != "$data_hash" ]] && return 1
+
+  # Expired
+  local age=$((now - cached_time))
+  [[ $age -gt $AI_CACHE_TTL ]] && return 1
+
+  # Valid cache hit
+  AI_ANALYSIS_RESULT="$cached_result"
+  AI_ANALYSIS_TIMESTAMP="$cached_time"
+  return 0
+}
+
+# Save analysis result to cache
+_save_cache() {
+  local data_hash="$1" result="$2"
+  local now
+  now="$(date +%s 2>/dev/null || echo 0)"
+
+  echo "$data_hash" > "$AI_CACHE_FILE"
+  echo "$now" >> "$AI_CACHE_FILE"
+  echo "$result" >> "$AI_CACHE_FILE"
+
+  AI_ANALYSIS_RESULT="$result"
+  AI_ANALYSIS_TIMESTAMP="$now"
+  AI_LAST_HASH="$data_hash"
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SYSTEM PROMPTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Build the system prompt for AI analysis
+_build_system_prompt() {
+  local mode="${1:-$AI_ANALYSIS_MODE}"
+
+  case "$mode" in
+    briefing)
+      cat <<'SYSTEM'
+You are Port Watcher AI — a cybersecurity AI assistant embedded in a port security scanning tool. Your job is to analyze open port data and produce a clear, actionable security briefing.
+
+For each scan you receive, you must:
+1. Summarize the overall security posture in 1-2 sentences
+2. Identify the TOP 3 most dangerous findings and explain WHY they're dangerous
+3. Note any unusual patterns (unknown processes, unexpected services, wide-open bindings)
+4. Provide a risk summary table
+
+Keep your response CONCISE. Use security terminology correctly. Be direct and honest — if the machine looks secure, say so. If it's a disaster, say that too.
+
+Format your response in Markdown with clear sections.
+SYSTEM
+      ;;
+    remediation)
+      cat <<'SYSTEM'
+You are Port Watcher AI — a cybersecurity AI assistant. Your job is to analyze open port data and provide SPECIFIC, ACTIONABLE remediation steps.
+
+For each scan:
+1. For every HIGH or CRITICAL risk finding, provide a concrete fix
+2. Suggest hardening commands where appropriate (e.g., "ufw deny 22", "systemctl disable --now vsftpd")
+3. Recommend configuration changes for exposed services
+4. Prioritize fixes by risk level
+
+Format as a numbered list of actions. Each action must be specific and implementable by a system administrator.
+
+Be practical — don't suggest removing SSH on a server that needs it. Do suggest key-only auth and changing the port.
+SYSTEM
+      ;;
+    attack)
+      cat <<'SYSTEM'
+You are Port Watcher AI acting as a red team operator. Analyze the open port data and describe how an attacker would chain these services into a compromise.
+
+For each scan:
+1. Identify the most promising attack path(s)
+2. Map services to likely exploits or techniques
+3. Describe the lateral movement possibilities
+4. Estimate the time-to-compromise for each path
+5. State what a successful compromise would give the attacker
+
+This is for DEFENSIVE purposes — to help the system owner understand their true risk.
+SYSTEM
+      ;;
+    full|*)
+      cat <<'SYSTEM'
+You are Port Watcher AI — a cybersecurity AI assistant embedded in a port security scanning tool. You have access to port scan results including risk scores, process info, user context, network bindings, MITRE ATT&CK mappings, anomaly detections, and attack surface grades.
+
+Your job is to analyze this data and produce a comprehensive security assessment.
+
+You MUST:
+1. Assess the overall security posture (grade: Secure / Moderate / At Risk / Critical)
+2. List the TOP findings (what's most important for the user to know)
+3. Provide specific remediation steps for each critical/high finding
+4. Include an attack narrative showing how an attacker would exploit these services
+5. End with a prioritized action plan
+
+Format your response in Markdown with these sections:
+- ## Executive Summary
+- ## Top Findings
+- ## Attack Narrative
+- ## Remediation Plan
+- ## Quick Wins (things to fix in 5 minutes)
+
+Keep the response actionable and specific. Don't be vague. If a finding is low risk, say so explicitly rather than generating false alarms.
+SYSTEM
+      ;;
+  esac
+}
+
+# Build the user prompt from port scan data
+_build_user_prompt() {
+  local port_data="$1"
+  local has_anomaly=false has_attack=false has_score=false has_topology=false has_profile=false has_threat=false
+  declare -f run_anomaly_detection &>/dev/null && has_anomaly=true
+  declare -f mitre_lookup &>/dev/null && has_attack=true
+  declare -f calculate_attack_surface &>/dev/null && has_score=true
+
+  local attack_info=""
+  if $has_attack; then
+    attack_info="$(show_attack_mapping 2>/dev/null || true)"
+  fi
+
+  local anomaly_info=""
+  if $has_anomaly; then
+    anomaly_info="$(show_anomaly_report 2>/dev/null || true)"
+  fi
+
+  local score_info=""
+  if $has_score; then
+    score_info="$(show_score_report 2>/dev/null || true)"
+  fi
+
+  cat <<PROMPT
+## Port Scan Results
+
+The following ports are currently listening on this machine:
+
+$(echo "$port_data" | while IFS='|' read -r process pid user proto bind_addr port; do
+  [[ -z "$port" ]] && continue
+  local risk_info score risk bind_type
+  risk_info="$(classify_port_risk "$port" 2>/dev/null || echo "UNKNOWN|3")"
+  bind_type="$(classify_bind "$bind_addr" 2>/dev/null || echo "UNKNOWN")"
+  score="$(calculate_score "$port" "$user" "$bind_type" "" 2>/dev/null || echo "?")"
+  risk="$(score_to_risk "$score" 2>/dev/null || echo "UNKNOWN")"
+  echo "  - Port $port/$proto | Process: $process (PID: $pid) | User: $user | Bind: $bind_addr | Risk: $risk | Score: $score"
+done)
+
+## System Context
+- Hostname: $(hostname 2>/dev/null || echo "unknown")
+- Kernel: $(uname -r 2>/dev/null || echo "unknown")
+- Uptime: $(uptime -p 2>/dev/null || echo "unknown")
+- User: $(whoami 2>/dev/null || echo "unknown")
+
+$(if [[ -n "$attack_info" ]]; then
+  echo "## MITRE ATT&CK Mappings"
+  echo "\`\`\`"
+  echo "$attack_info"
+  echo "\`\`\`"
+fi)
+
+$(if [[ -n "$anomaly_info" ]]; then
+  echo "## Anomaly Detections"
+  echo "\`\`\`"
+  echo "$anomaly_info"
+  echo "\`\`\`"
+fi)
+
+$(if [[ -n "$score_info" ]]; then
+  echo "## Attack Surface Score"
+  echo "\`\`\`"
+  echo "$score_info"
+  echo "\`\`\`"
+fi)
+
+Provide your analysis based on the configured analysis mode.
+PROMPT
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  API CALL FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Make API call to OpenAI-compatible providers
+_call_openai_compatible() {
+  local endpoint="$1" api_key="$2" model="$3" system_prompt="$4" user_prompt="$5"
+
+  # Build JSON payload
+  local payload
+  payload="$(cat <<JSON
+{
+  "model": "$model",
+  "messages": [
+    {"role": "system", "content": $(echo "$system_prompt" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))" 2>/dev/null || echo "\"$system_prompt\"")},
+    {"role": "user", "content": $(echo "$user_prompt" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))" 2>/dev/null || echo "\"$user_prompt\"")}
+  ],
+  "temperature": $AI_TEMPERATURE,
+  "max_tokens": $AI_MAX_TOKENS,
+  "stream": false
+}
+JSON
+  )"
+
+  curl -s --max-time 60 "$endpoint" \
+    -H "Authorization: Bearer $api_key" \
+    -H "Content-Type: application/json" \
+    -H "HTTP-Referer: https://github.com/anonymous777999/Bash-Tools" \
+    -H "X-OpenRouter-Title: Port Watcher AI" \
+    -d "$payload" 2>/dev/null || echo '{"error":"curl_failed"}'
+}
+
+# Make API call to Google Gemini
+_call_gemini() {
+  local endpoint="$1" model="$2" system_prompt="$3" user_prompt="$4"
+
+  local payload
+  payload="$(cat <<JSON
+{
+  "system_instruction": {
+    "parts": [{"text": $(echo "$system_prompt" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))" 2>/dev/null || echo "\"$system_prompt\"")}]
+  },
+  "contents": [
+    {"role": "user", "parts": [{"text": $(echo "$user_prompt" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))" 2>/dev/null || echo "\"$user_prompt\"")}]}
+  ],
+  "generationConfig": {
+    "temperature": $AI_TEMPERATURE,
+    "maxOutputTokens": $AI_MAX_TOKENS
+  }
+}
+JSON
+  )"
+
+  curl -s --max-time 60 "$endpoint" \
+    -H "Content-Type: application/json" \
+    -d "$payload" 2>/dev/null || echo '{"error":"curl_failed"}'
+}
+
+# Extract the response text from various API response formats
+_extract_response() {
+  local provider="$1" json="$2"
+  local content=""
+
+  # Check for API errors
+  if echo "$json" | grep -q '"error"'; then
+    local error_msg
+    error_msg="$(echo "$json" | python3 -c "
+import json,sys
+try:
+    d = json.load(sys.stdin)
+    err = d.get('error', {})
+    if isinstance(err, dict):
+        print(err.get('message', str(err)))
+    else:
+        print(str(err))
+except:
+    print('Unknown API error')
+" 2>/dev/null || echo "API error (could not parse)")"
+    echo "⚠️  API Error: $error_msg"
+    return 1
+  fi
+
+  case "$provider" in
+    gemini)
+      content="$(echo "$json" | python3 -c "
+import json,sys
+try:
+    d = json.load(sys.stdin)
+    parts = d.get('candidates', [{}])[0].get('content', {}).get('parts', [])
+    text = ' '.join(p.get('text', '') for p in parts)
+    print(text)
+except:
+    print('Failed to parse Gemini response')
+" 2>/dev/null || echo "Parse error")"
+      ;;
+    openai|openrouter|nvidia|groq|*)
+      content="$(echo "$json" | python3 -c "
+import json,sys
+try:
+    d = json.load(sys.stdin)
+    print(d['choices'][0]['message']['content'])
+except:
+    print('Failed to parse API response')
+" 2>/dev/null || echo "Parse error")"
+      ;;
+  esac
+
+  echo "$content"
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MAIN ANALYSIS FUNCTION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Run AI analysis on port scan data
+run_ai_analysis() {
+  local port_data="$1"
+  local mode="${2:-$AI_ANALYSIS_MODE}"
+
+  # Check if analysis is enabled
+  if [[ "$AI_ANALYSIS_ENABLED" != "true" ]]; then
+    cecho "$C_DIM" "  AI Analysis disabled (set AI_ANALYSIS_ENABLED=true in config)"
+    return 0
+  fi
+
+  # Check curl availability
+  if ! command -v curl &>/dev/null; then
+    cecho "$C_BOLD_YELLOW" "  ⚠️  curl not found — AI analysis requires curl"
+    return 0
+  fi
+
+  # Check python availability (for JSON processing)
+  if ! command -v python3 &>/dev/null; then
+    cecho "$C_BOLD_YELLOW" "  ⚠️  python3 not found — AI analysis requires python3"
+    return 0
+  fi
+
+  # Check cache first
+  local data_hash
+  data_hash="$(_compute_data_hash "$port_data")"
+  if _check_cache "$data_hash"; then
+    # Cache hit — still print a brief note
+    local age=$(( $(date +%s) - AI_ANALYSIS_TIMESTAMP ))
+    echo ""
+    cecho "$C_DIM" "  [AI Analysis] Using cached result (${age}s old)"
+    echo ""
+    echo "$AI_ANALYSIS_RESULT"
+    return 0
+  fi
+
+  # Check available providers
+  local provider="$AI_PROVIDER"
+  if ! _is_provider_available "$provider"; then
+    # Try fallback to any available provider
+    local fallback_provider=""
+    for p in openrouter groq nvidia openai gemini; do
+      if _is_provider_available "$p"; then
+        fallback_provider="$p"
+        break
+      fi
+    done
+    if [[ -n "$fallback_provider" ]]; then
+      provider="$fallback_provider"
+      cecho "$C_DIM" "  [AI] Falling back to provider: $provider"
+    else
+      echo ""
+      cecho "$C_BOLD_YELLOW" "  ╔═══════════════════════════════════════════════════════════════╗"
+      cecho "$C_BOLD_YELLOW" "  ║  🤖 AI Analysis: No API Keys Configured                       ║"
+      cecho "$C_BOLD_YELLOW" "  ╚═══════════════════════════════════════════════════════════════╝"
+      echo ""
+      echo "  To enable AI-powered analysis, set at least one API key in ports.conf:"
+      echo ""
+      echo "    # Recommended (free tier):"
+      echo "    GROQ_API_KEY=gsk_your_key_here"
+      echo "    AI_PROVIDER=groq"
+      echo ""
+      echo "    # Or with OpenRouter (free + paid models):"
+      echo "    OPENROUTER_API_KEY=sk-or-your-key-here"
+      echo "    AI_PROVIDER=openrouter"
+      echo ""
+      echo "    # Or with NVIDIA NIM (free rate-limited):"
+      echo "    NVIDIA_API_KEY=nvapi-your-key-here"
+      echo "    AI_PROVIDER=nvidia"
+      echo ""
+      echo "    # Or with Google Gemini (free tier available):"
+      echo "    GEMINI_API_KEY=AIza_your_key_here"
+      echo "    AI_PROVIDER=gemini"
+      echo ""
+      return 0
+    fi
+  fi
+
+  # Check if there's data to analyze
+  if [[ -z "$port_data" ]]; then
+    echo ""
+    cecho "$C_BOLD_YELLOW" "  No port data to analyze."
+    return 0
+  fi
+
+  # Show status
+  local model="$(_get_model "$provider")"
+  echo ""
+  cecho "$C_BOLD_CYAN" "  ╔═══════════════════════════════════════════════════════════════╗"
+  cecho "$C_BOLD_CYAN" "  ║  🤖 AI Security Analysis                                    ║"
+  cecho "$C_BOLD_CYAN" "  ╚═══════════════════════════════════════════════════════════════╝"
+  cecho "$C_DIM" "     Provider: $provider"
+  cecho "$C_DIM" "     Model:     $model"
+  cecho "$C_DIM" "     Mode:      $mode"
+  echo ""
+
+  # Save and disable color to prevent ANSI codes bleeding into the AI prompt
+  local saved_color="$COLOR"
+  COLOR=false
+
+  # Build system and user prompts
+  local system_prompt user_prompt
+  system_prompt="$(_build_system_prompt "$mode")"
+  user_prompt="$(_build_user_prompt "$port_data")"
+
+  # Restore color
+  COLOR="$saved_color"
+
+  # Make the API call
+  local response_json response_text
+  local endpoint="$(_get_endpoint "$provider")"
+
+  if [[ -z "$endpoint" ]]; then
+    cecho "$C_BOLD_RED" "  Unknown provider: $provider"
+    return 1
+  fi
+
+  if [[ "$provider" == "gemini" ]]; then
+    response_json="$(_call_gemini "$endpoint" "$model" "$system_prompt" "$user_prompt")"
+  else
+    local api_key
+    api_key="$(_get_api_key "$provider")"
+    if [[ -z "$api_key" ]]; then
+      cecho "$C_BOLD_RED" "  No API key configured for provider: $provider"
+      return 1
+    fi
+    response_json="$(_call_openai_compatible "$endpoint" "$api_key" "$model" "$system_prompt" "$user_prompt")"
+  fi
+
+  # Extract response text
+  response_text="$(_extract_response "$provider" "$response_json")"
+
+  if [[ $? -ne 0 || -z "$response_text" || "$response_text" == "Parse error" ]]; then
+    cecho "$C_BOLD_RED" "  ⚠️  API call failed. Raw response:"
+    echo ""
+    echo "$response_json" | head -c 500
+    echo ""
+    # Save partial response for debugging
+    echo "$response_json" > /tmp/port-watcher-ai-error.json
+    cecho "$C_DIM" "  Full response saved to: /tmp/port-watcher-ai-error.json"
+    return 1
+  fi
+
+  # Save to cache
+  _save_cache "$data_hash" "$response_text"
+
+  # Print the result
+  echo "$response_text"
+  echo ""
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  REPORT DISPLAY
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Show AI analysis report
+show_ai_analysis_report() {
+  local port_data="$1"
+  run_ai_analysis "$port_data" "$AI_ANALYSIS_MODE"
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PLUGIN INTERFACE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Plugin initialization — load keys from environment if not set in config
+plugin_init_ai-analysis() {
+  # If running in MCP mode or env vars are set, use those instead
+  [[ -z "$OPENAI_API_KEY" && -n "${OPENAI_API_KEY_ENV:-}" ]] && OPENAI_API_KEY="$OPENAI_API_KEY_ENV"
+  [[ -z "$OPENROUTER_API_KEY" && -n "${OPENROUTER_API_KEY_ENV:-}" ]] && OPENROUTER_API_KEY="$OPENROUTER_API_KEY_ENV"
+  [[ -z "$NVIDIA_API_KEY" && -n "${NVIDIA_API_KEY_ENV:-}" ]] && NVIDIA_API_KEY="$NVIDIA_API_KEY_ENV"
+  [[ -z "$GROQ_API_KEY" && -n "${GROQ_API_KEY_ENV:-}" ]] && GROQ_API_KEY="$GROQ_API_KEY_ENV"
+  [[ -z "$GEMINI_API_KEY" && -n "${GEMINI_API_KEY_ENV:-}" ]] && GEMINI_API_KEY="$GEMINI_API_KEY_ENV"
+
+  # Print available AI providers
+  if $AI_ANALYSIS_ENABLED; then
+    local available=()
+    for p in openai openrouter nvidia groq gemini; do
+      if _is_provider_available "$p"; then
+        available+=("$p")
+      fi
+    done
+    if [[ ${#available[@]} -gt 0 ]]; then
+      cecho "$C_DIM" "  [ai-analysis] AI providers ready: ${available[*]}"
+    else
+      cecho "$C_DIM" "  [ai-analysis] No API keys configured. Use --ai-analyze for setup info."
+    fi
+  fi
+
+  return 0
+}

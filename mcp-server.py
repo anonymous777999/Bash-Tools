@@ -174,6 +174,30 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "ai_analyze",
+        "description": "Run AI-powered security analysis on scan results. Pipes port data through an LLM (Groq, OpenRouter, NVIDIA, Gemini, or OpenAI) for natural-language security briefings, remediation advice, attack narratives, and risk explanations. Requires an API key configured in ports.conf.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["briefing", "remediation", "attack", "full"],
+                    "default": "briefing",
+                    "description": "Analysis mode: 'briefing' (summary), 'remediation' (fix steps), 'attack' (red team narrative), 'full' (comprehensive)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["openai", "openrouter", "nvidia", "groq", "gemini"],
+                    "description": "AI provider to use. Falls back to AI_PROVIDER in config if not specified.",
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Model name to use (e.g., 'gpt-4o-mini', 'llama-3.3-70b-versatile'). Defaults to provider default if not specified.",
+                },
+            },
+        },
+    },
 ]
 
 # ─── Resource Definitions ───
@@ -340,6 +364,7 @@ def handle_tools_call(params: dict):
         "process_profile": _call_process_profile,
         "attack_surface": _call_attack_surface,
         "run_all": _call_run_all,
+        "ai_analyze": _call_ai_analyze,
     }
 
     handler = handlers.get(name)
@@ -461,6 +486,22 @@ def _call_run_all(args: dict) -> dict:
 
     if output == "json":
         cmd += ["--output", "json"]
+
+    stdout = run_port_watcher(cmd, timeout=120)
+    return _text_content(stdout)
+
+
+def _call_ai_analyze(args: dict) -> dict:
+    """Execute AI-powered security analysis."""
+    mode = args.get("mode", "briefing")
+    provider = args.get("provider", "")
+    model = args.get("model", "")
+
+    cmd = ["--ai-analyze", "--ai-mode", mode]
+    if provider:
+        cmd += ["--ai-provider", provider]
+    if model:
+        cmd += ["--ai-model", model]
 
     stdout = run_port_watcher(cmd, timeout=120)
     return _text_content(stdout)

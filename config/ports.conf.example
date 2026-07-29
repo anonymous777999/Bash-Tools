@@ -73,3 +73,47 @@ TIMESTAMP=true
 # Alert thresholds
 ALERT_CRITICAL_SCORE=30      # Score above this triggers CRITICAL alert
 ALERT_HIGH_SCORE=15          # Score above this triggers HIGH alert
+
+# ═══════════════════════════════════════════════════════════════
+#  🤖 AI Analysis Configuration
+#  ═══════════════════════════════════════════════════════════════
+#
+# Port Watcher can pipe scan results through LLM APIs for natural-language
+# security briefings, remediation advice, and attack narratives.
+#
+# Supported providers:
+#   openai     — GPT-4o / GPT-4o-mini          (needs API key with prepaid balance)
+#   openrouter — Llama 3, Mistral, DeepSeek     (free models + cheap paid, 1M+ models)
+#   nvidia     — Llama 3.1 70B, Nemotron        (FREE rate-limited, ~40 RPM)
+#   groq       — Llama 3.3 70B, Mixtral, Gemma  (FREE tier, TPM-limited)
+#   gemini     — Gemini 2.0 Flash / Pro          (FREE tier, rate-limited)
+#
+# RECOMMENDED for free: Set GROQ_API_KEY or GEMINI_API_KEY (no credit card needed).
+# NVIDIA NIM also offers free access with just an account.
+
+AI_ANALYSIS_ENABLED=true          # Enable AI analysis
+AI_PROVIDER=openrouter            # Default provider (openai|openrouter|nvidia|groq|gemini)
+AI_MODEL=auto                     # 'auto' = provider default, or specify: gpt-4o-mini, etc.
+AI_TEMPERATURE=0.3                # Lower = more deterministic, Higher = more creative
+AI_MAX_TOKENS=2048                # Max response length
+AI_ANALYSIS_MODE=briefing         # Analysis mode: briefing|remediation|attack|full
+AI_CACHE_TTL=300                  # Cache TTL in seconds (0 = disable cache)
+
+# ─── API Keys ───
+# Set at least ONE of these. Keys can also be set via environment variables.
+
+# Groq API (FREE — recommended! Get your key at https://console.groq.com)
+# GROQ_API_KEY=gsk_your_groq_api_key_here
+
+# OpenRouter API (free models + credit-based paid models)
+# Get your key at: https://openrouter.ai/keys
+# OPENROUTER_API_KEY=sk-or-your-openrouter-key-here
+
+# NVIDIA NIM API (FREE rate-limited — Get key at https://build.nvidia.com)
+# NVIDIA_API_KEY=nvapi-your-nvidia-api-key-here
+
+# Google Gemini API (FREE tier — Get key at https://aistudio.google.com)
+# GEMINI_API_KEY=AIza_your_gemini_api_key_here
+
+# OpenAI API (paid — requires prepaid balance)
+# OPENAI_API_KEY=sk-your-openai-api-key-here

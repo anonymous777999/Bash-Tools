@@ -129,6 +129,10 @@ SHOW_TOPOLOGY=false
 SHOW_PROFILE=false
 PROFILE_SNAPSHOT=false
 SHOW_THREAT_INTEL=false
+CLI_AI_ANALYZE=false
+CLI_AI_PROVIDER=""
+CLI_AI_MODE=""
+CLI_AI_MODEL=""
 
 # ─── SQLITE DATABASE GLOBALS ───
 DB_PATH="$HOME/.config/port-watcher/history.db"
@@ -177,6 +181,10 @@ ${C_BOLD}Options:${C_RESET}
       --profile             Show process behavior report (CPU/mem/FDs/threads/hash changes)
       --profile-snapshot    Record current binary hashes as baseline for --profile
       --threat-intel        Check services on Shodan/AbuseIPDB/built-in threat feeds
+      --ai-analyze          Run AI-powered security analysis on scan results
+      --ai-provider <name>  AI provider: openai, openrouter, nvidia, groq, gemini
+      --ai-mode <mode>      Analysis mode: briefing, remediation, attack, full (default: briefing)
+      --ai-model <model>    AI model name (e.g., 'gpt-4o-mini', 'llama-3.3-70b-versatile')
       --version            Show version information
   -h, --help               Show this help message
 
@@ -205,6 +213,10 @@ ${C_BOLD}Examples:${C_RESET}
   ${SCRIPT_NAME} --profile                    # Show process behavior report
   ${SCRIPT_NAME} --profile-snapshot           # Record binary hash baseline
   ${SCRIPT_NAME} --threat-intel               # Check services on threat feeds
+  ${SCRIPT_NAME} --ai-analyze                  # AI security analysis
+  ${SCRIPT_NAME} --ai-analyze --ai-mode attack  # AI attack narrative mode
+  ${SCRIPT_NAME} --ai-provider groq             # Use Groq AI provider
+  ${SCRIPT_NAME} --ai-analyze --ai-model gpt-4o-mini  # Use specific model
   ${SCRIPT_NAME} --syslog                     # Log to syslog
 
 ${C_BOLD}Risk Levels:${C_RESET}
@@ -234,6 +246,10 @@ ${C_BOLD}Plugins:${C_RESET}
   --profile                Show process behavior report (CPU/mem/hash/threads, etc.)
   --profile-snapshot       Record current binary hashes as baseline profile
   --threat-intel           Check services on Shodan/AbuseIPDB/built-in threat feeds
+  --ai-analyze             Run AI-powered security analysis (needs API key in config)
+  --ai-provider <name>     AI provider: openai, openrouter, nvidia, groq, gemini (default: openrouter)
+  --ai-mode <mode>         Analysis mode: briefing, remediation, attack, full (default: briefing)
+  --ai-model <model>       AI model name override (e.g., 'gpt-4o-mini', 'llama-3.3-70b-versatile')
 
 ${C_BOLD}Configuration:${C_RESET}
   ~/.config/port-watcher/ports.conf           User config
@@ -354,6 +370,24 @@ parse_args() {
         ;;
       --threat-intel)
         SHOW_THREAT_INTEL=true
+        ;;
+      --ai-analyze)
+        CLI_AI_ANALYZE=true
+        ;;
+      --ai-provider)
+        shift
+        CLI_AI_PROVIDER="$1"
+        CLI_AI_ANALYZE=true
+        ;;
+      --ai-mode)
+        shift
+        CLI_AI_MODE="$1"
+        CLI_AI_ANALYZE=true
+        ;;
+      --ai-model)
+        shift
+        CLI_AI_MODEL="$1"
+        CLI_AI_ANALYZE=true
         ;;
       --version)
         echo "Port Watcher v${VERSION}"
@@ -1409,6 +1443,21 @@ main() {
     if declare -f apply_threat_intel_risk &>/dev/null; then
       apply_threat_intel_risk "$port_data" 2>/dev/null || true
     fi
+  fi
+
+  # Run AI Analysis if requested
+  if $CLI_AI_ANALYZE && declare -f run_ai_analysis &>/dev/null; then
+    # Override provider/mode/model if specified via CLI
+    if [[ -n "$CLI_AI_PROVIDER" ]]; then
+      AI_PROVIDER="$CLI_AI_PROVIDER"
+    fi
+    if [[ -n "$CLI_AI_MODE" ]]; then
+      AI_ANALYSIS_MODE="$CLI_AI_MODE"
+    fi
+    if [[ -n "$CLI_AI_MODEL" ]]; then
+      AI_MODEL="$CLI_AI_MODEL"
+    fi
+    show_ai_analysis_report "$port_data" 2>/dev/null || true
   fi
 
   # Record scan to database if available (call plugin function directly)
